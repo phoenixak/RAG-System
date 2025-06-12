@@ -11,7 +11,8 @@ A production-ready Enterprise RAG (Retrieval-Augmented Generation) system that e
 ## Overview
 
 This Enterprise RAG System provides a comprehensive solution for document management, semantic search, and AI-powered question answering. Built with modern microservices architecture, it offers scalable document processing, hybrid search capabilities, and an intuitive chat interface for interacting with your knowledge base.
-Demo : https://huggingface.co/spaces/Phoenixak99/rag-demo
+
+Demo: https://huggingface.co/spaces/Phoenixak99/rag-demo
 
 ## ✨ Features
 
