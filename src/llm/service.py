@@ -4,7 +4,7 @@ Main service for generating RAG responses using various LLM providers.
 """
 
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.core.logging import get_logger
 
@@ -26,10 +26,10 @@ class LLMService:
         self._api_available = self._check_api_availability()
 
         logger.info(
-            "LLM service initialized", 
-            provider=self.provider, 
+            "LLM service initialized",
+            provider=self.provider,
             model=self.model,
-            api_available=self._api_available
+            api_available=self._api_available,
         )
 
     def _get_provider(self) -> str:
@@ -61,7 +61,7 @@ class LLMService:
         """Get or create the LLM client."""
         if not self._api_available:
             raise ValueError(f"API key not available for provider: {self.provider}")
-            
+
         if self._client is None:
             if self.provider == LLMProvider.OPENAI.value:
                 try:
@@ -259,7 +259,7 @@ class LLMService:
         """Create a fallback response when LLM fails."""
         if not self._api_available:
             return self._create_no_api_response(query, context_docs)
-            
+
         if not context_docs:
             return self.prompt_templates.create_no_context_prompt(query)
 
@@ -311,7 +311,7 @@ class LLMService:
 
         # Create response with search results but explain demo mode
         num_results = len(context_docs)
-        
+
         response = f"🔍 **Search Results for Demo Mode**\n\n"
         response += f"I searched for: **{query}**\n\n"
         response += f"✅ Found **{num_results}** relevant document{'s' if num_results != 1 else ''}:\n\n"
@@ -327,7 +327,7 @@ class LLMService:
             # Create a meaningful excerpt
             summary = content[:200] + "..." if len(content) > 200 else content
             page_info = f" (Page {page})" if page else ""
-            
+
             response += f"**{i}. {doc_name}**{page_info} - Relevance: {score:.1%}\n"
             response += f"*{summary}*\n\n"
 
@@ -337,7 +337,9 @@ class LLMService:
         response += "---\n\n"
         response += "🤖 **Demo Mode Notice**: This Enterprise RAG system is running in demo mode without LLM API integration. "
         response += f"To enable AI-powered responses that synthesize information from these documents, please configure your {self.provider.upper()} API key:\n\n"
-        response += f"- Set the `{self.provider.upper()}_API_KEY` environment variable\n"
+        response += (
+            f"- Set the `{self.provider.upper()}_API_KEY` environment variable\n"
+        )
         response += "- Restart the application\n\n"
         response += "💡 The search and document retrieval functionality is working perfectly! You can see the relevant content above."
 
@@ -347,7 +349,7 @@ class LLMService:
         """Check if API is available for the configured provider."""
         return self._api_available
 
-    async def test_connection(self) -> Dict[str, any]:
+    async def test_connection(self) -> Dict[str, Any]:
         """Test connection to the configured LLM provider."""
         if not self._api_available:
             return {
@@ -356,9 +358,9 @@ class LLMService:
                 "model": self.model,
                 "error": f"API key not configured for {self.provider}",
                 "demo_mode": True,
-                "instructions": f"Set {self.provider.upper()}_API_KEY environment variable to enable LLM responses"
+                "instructions": f"Set {self.provider.upper()}_API_KEY environment variable to enable LLM responses",
             }
-            
+
         try:
             client = await self._get_client()
 
@@ -391,8 +393,8 @@ class LLMService:
                 "LLM connection test failed", provider=self.provider, error=str(e)
             )
             return {
-                "success": False, 
-                "provider": self.provider, 
+                "success": False,
+                "provider": self.provider,
                 "model": self.model,
                 "error": str(e),
                 "demo_mode": False,

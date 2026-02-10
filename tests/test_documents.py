@@ -1,567 +1,317 @@
 """
-Document Processing Tests
-Comprehensive tests for document upload, processing, and management.
+Tests for document processing components.
+Tests DocumentProcessorFactory, TextChunker, DocumentService, and models.
 """
 
-import asyncio
 import tempfile
 import uuid
-from io import BytesIO
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from src.documents.models import DocumentChunk, DocumentResponse, DocumentType, ProcessingStatus
-from src.documents.processors import (
-    PDFProcessor,
-    DOCXProcessor,
-    TextProcessor,
-    CSVProcessor,
-    get_processor_for_file_type,
+from src.documents.models import (
+    DocumentChunk,
+    DocumentMetadata,
+    DocumentType,
+    DocumentUpload,
+    ProcessingStatus,
 )
-from src.documents.chunking import RecursiveChunker, ChunkingStrategy
-from src.documents.embeddings import EmbeddingGenerator
-from src.documents.service import DocumentService
 
 
 class TestDocumentModels:
-    """Test document data models."""
+    """Tests for document Pydantic models."""
 
-    def test_document_model_creation(self):
-        """Test document model creation and validation."""
-        doc_data = {
-            "document_id": str(uuid.uuid4()),
-            "filename": "test_document.pdf",
-            "file_type": DocumentType.PDF,
-            "file_size": 1024,
-            "status": ProcessingStatus.PENDING,
-            "uploaded_by": "test_user",
-            "metadata": {"title": "Test Document", "author": "Test Author"},
-        }
-        
-        document = DocumentResponse(**doc_data)
-        assert document.filename == "test_document.pdf"
-        assert document.file_type == DocumentType.PDF
-        assert document.status == ProcessingStatus.PENDING
+    def test_document_upload_valid(self):
+        """Test valid document upload model."""
+        upload = DocumentUpload(
+            filename="test.pdf",
+            content_type="application/pdf",
+            size=1024,
+        )
+        assert upload.filename == "test.pdf"
+        assert upload.size == 1024
 
-    def test_document_type_validation(self):
-        """Test document type validation."""
-        # Valid document types
-        assert DocumentType.PDF.value == "pdf"
-        assert DocumentType.DOCX.value == "docx"
-        assert DocumentType.TXT.value == "txt"
-        assert DocumentType.CSV.value == "csv"
-
-    def test_document_status_transitions(self):
-        """Test document status state transitions."""
-        # Valid status transitions
-        valid_transitions = [
-            (ProcessingStatus.PENDING, ProcessingStatus.PROCESSING),
-            (ProcessingStatus.PROCESSING, ProcessingStatus.COMPLETED),
-            (ProcessingStatus.PROCESSING, ProcessingStatus.FAILED),
-            (ProcessingStatus.FAILED, ProcessingStatus.PENDING),  # Retry
-        ]
-        
-        for from_status, to_status in valid_transitions:
-            assert from_status != to_status  # Ensure they're different states
-
-
-class TestDocumentProcessors:
-    """Test document content processors."""
-
-    def test_pdf_processor(self):
-        """Test PDF document processing."""
-        processor = PDFProcessor()
-        
-        # Test processor identification
-        assert processor.can_process("test.pdf") is True
-        assert processor.can_process("test.txt") is False
-        
-        # Test supported formats
-        assert "pdf" in processor.supported_formats
-
-    def test_docx_processor(self):
-        """Test DOCX document processing."""
-        processor = DOCXProcessor()
-        
-        assert processor.can_process("document.docx") is True
-        assert processor.can_process("document.pdf") is False
-
-    def test_text_processor(self):
-        """Test text document processing."""
-        processor = TextProcessor()
-        
-        assert processor.can_process("readme.txt") is True
-        assert processor.can_process("document.pdf") is False
-
-    def test_csv_processor(self):
-        """Test CSV document processing."""
-        processor = CSVProcessor()
-        
-        assert processor.can_process("data.csv") is True
-        assert processor.can_process("document.txt") is False
-
-    def test_get_processor_for_file_type(self):
-        """Test processor selection based on file type."""
-        # Test PDF processor selection
-        pdf_processor = get_processor_for_file_type("pdf")
-        assert isinstance(pdf_processor, PDFProcessor)
-        
-        # Test DOCX processor selection
-        docx_processor = get_processor_for_file_type("docx")
-        assert isinstance(docx_processor, DOCXProcessor)
-        
-        # Test unsupported file type
+    def test_document_upload_file_too_large(self):
+        """Test document upload rejects oversized files."""
         with pytest.raises(ValueError):
-            get_processor_for_file_type("unsupported")
+            DocumentUpload(
+                filename="large.pdf",
+                content_type="application/pdf",
+                size=100 * 1024 * 1024,  # 100MB exceeds 50MB limit
+            )
 
-    @pytest.mark.asyncio
-    async def test_text_extraction(self):
-        """Test text extraction from documents."""
-        processor = TextProcessor()
-        
-        # Create test text content
-        test_content = b"This is a test document with sample content."
-        
-        with patch("src.documents.processors.TextProcessor.extract_text") as mock_extract:
-            mock_extract.return_value = "This is a test document with sample content."
-            
-            extracted_text = await processor.extract_text(test_content)
-            assert "test document" in extracted_text
-            assert len(extracted_text) > 0
+    def test_document_upload_invalid_extension(self):
+        """Test document upload rejects unsupported file types."""
+        with pytest.raises(ValueError):
+            DocumentUpload(
+                filename="test.exe",
+                content_type="application/octet-stream",
+                size=1024,
+            )
 
-    @pytest.mark.asyncio
-    async def test_metadata_extraction(self):
-        """Test metadata extraction from documents."""
-        processor = PDFProcessor()
-        
-        with patch("src.documents.processors.PDFProcessor.extract_metadata") as mock_metadata:
-            mock_metadata.return_value = {
-                "title": "Test Document",
-                "author": "Test Author",
-                "creation_date": "2023-01-01",
-                "page_count": 5,
-            }
-            
-            metadata = await processor.extract_metadata(b"fake_pdf_content")
-            assert metadata["title"] == "Test Document"
-            assert metadata["author"] == "Test Author"
-            assert metadata["page_count"] == 5
-
-
-class TestDocumentChunking:
-    """Test document chunking strategies."""
-
-    def test_recursive_chunker_creation(self):
-        """Test recursive chunker initialization."""
-        chunker = RecursiveChunker(
-            chunk_size=1000,
-            chunk_overlap=200,
-            strategy=ChunkingStrategy.RECURSIVE
+    def test_document_metadata_defaults(self):
+        """Test DocumentMetadata default values."""
+        meta = DocumentMetadata(
+            filename="test.txt",
+            document_type=DocumentType.TXT,
+            size=100,
+            content_type="text/plain",
+            uploaded_by="test_user",
         )
-        
-        assert chunker.chunk_size == 1000
-        assert chunker.chunk_overlap == 200
-        assert chunker.strategy == ChunkingStrategy.RECURSIVE
+        assert meta.processing_status == ProcessingStatus.QUEUED
+        assert meta.id is not None
+        assert meta.chunk_count is None
 
-    def test_text_chunking(self):
-        """Test text chunking functionality."""
-        chunker = RecursiveChunker(chunk_size=100, chunk_overlap=20)
-        
-        # Test text that should be chunked
-        long_text = "This is a long text. " * 20  # 400+ characters
-        chunks = chunker.chunk_text(long_text)
-        
-        assert len(chunks) > 1  # Should be split into multiple chunks
-        
-        # Check overlap
-        if len(chunks) > 1:
-            # Some content should overlap between consecutive chunks
-            chunk1_end = chunks[0].text[-20:]  # Last 20 chars of first chunk
-            chunk2_start = chunks[1].text[:20]  # First 20 chars of second chunk
-            # There should be some overlap in content
-            assert len(chunk1_end.strip()) > 0
-            assert len(chunk2_start.strip()) > 0
-
-    def test_chunk_metadata(self):
-        """Test chunk metadata generation."""
-        chunker = RecursiveChunker()
-        
-        text = "Sample text for chunking with metadata."
-        chunks = chunker.chunk_text(text, document_id="test_doc", metadata={"page": 1})
-        
-        assert len(chunks) >= 1
-        chunk = chunks[0]
-        
+    def test_document_chunk_creation(self):
+        """Test DocumentChunk creation with required fields."""
+        chunk = DocumentChunk(
+            document_id=uuid.uuid4(),
+            chunk_index=0,
+            text="Sample chunk text",
+            token_count=3,
+            start_char=0,
+            end_char=17,
+        )
         assert chunk.chunk_index == 0
-        assert chunk.document_id == "test_doc"
-        assert chunk.metadata["page"] == 1
+        assert chunk.embedding is None
+        assert chunk.id is not None
 
-    def test_sentence_boundary_chunking(self):
-        """Test chunking respects sentence boundaries."""
-        chunker = RecursiveChunker(chunk_size=50, respect_sentence_boundaries=True)
-        
-        text = "First sentence. Second sentence. Third sentence. Fourth sentence."
-        chunks = chunker.chunk_text(text)
-        
-        # Check that chunks end with sentence boundaries when possible
-        for chunk in chunks:
-            if len(chunk.text) < 50:  # If chunk is smaller than max size
-                # It should ideally end with a sentence boundary
-                assert chunk.text.strip().endswith('.') or chunk == chunks[-1]
+    def test_processing_status_values(self):
+        """Test ProcessingStatus enum values."""
+        assert ProcessingStatus.QUEUED == "queued"
+        assert ProcessingStatus.PROCESSING == "processing"
+        assert ProcessingStatus.COMPLETED == "completed"
+        assert ProcessingStatus.FAILED == "failed"
 
-    def test_chunking_strategies(self):
-        """Test different chunking strategies."""
-        strategies = [
-            ChunkingStrategy.RECURSIVE,
-            ChunkingStrategy.SENTENCE,
-            ChunkingStrategy.PARAGRAPH,
-        ]
-        
-        text = "Paragraph one.\n\nParagraph two. With multiple sentences. And more content.\n\nParagraph three."
-        
-        for strategy in strategies:
-            chunker = RecursiveChunker(strategy=strategy, chunk_size=100)
-            chunks = chunker.chunk_text(text)
-            
-            assert len(chunks) >= 1
-            assert all(len(chunk.text) <= 100 + chunker.chunk_overlap for chunk in chunks)
+    def test_document_type_values(self):
+        """Test DocumentType enum values."""
+        assert DocumentType.PDF == "pdf"
+        assert DocumentType.DOCX == "docx"
+        assert DocumentType.TXT == "txt"
+        assert DocumentType.CSV == "csv"
 
 
-class TestEmbeddingGeneration:
-    """Test embedding generation functionality."""
+class TestDocumentProcessorFactory:
+    """Tests for DocumentProcessorFactory."""
 
-    @pytest.fixture
-    def mock_embedding_model(self):
-        """Mock embedding model."""
-        model = Mock()
-        model.encode = Mock(return_value=[[0.1, 0.2, 0.3, 0.4, 0.5]])
-        return model
+    def test_get_processor_pdf(self):
+        """Test getting PDF processor."""
+        from src.documents.processors import document_processor_factory
 
-    def test_embedding_generator_creation(self, mock_embedding_model):
-        """Test embedding generator initialization."""
-        with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value = mock_embedding_model
-            
-            generator = EmbeddingGenerator()
-            assert generator.model_name is not None
-            assert generator.cache_size > 0
-
-    def test_get_model_info(self, mock_embedding_model):
-        """Test getting model information."""
-        with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value = mock_embedding_model
-            mock_embedding_model.get_sentence_embedding_dimension = Mock(return_value=384)
-            
-            generator = EmbeddingGenerator()
-            model_info = generator.get_model_info()
-            
-            assert "model_name" in model_info
-            assert "dimensions" in model_info
-            assert model_info["dimensions"] == 384
-
-    @pytest.mark.asyncio
-    async def test_generate_embeddings(self, mock_embedding_model):
-        """Test embedding generation."""
-        with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value = mock_embedding_model
-            
-            generator = EmbeddingGenerator()
-            texts = ["This is a test sentence.", "Another test sentence."]
-            
-            embeddings = await generator.generate_embeddings(texts)
-            
-            assert len(embeddings) == 2
-            assert len(embeddings[0]) == 5  # Mock embedding dimension
-            assert all(isinstance(emb, list) for emb in embeddings)
-
-    @pytest.mark.asyncio
-    async def test_batch_embedding_generation(self, mock_embedding_model):
-        """Test batch embedding generation."""
-        with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value = mock_embedding_model
-            mock_embedding_model.encode = Mock(return_value=[[0.1, 0.2]] * 10)
-            
-            generator = EmbeddingGenerator(batch_size=5)
-            
-            # Test with more texts than batch size
-            texts = [f"Test sentence {i}" for i in range(10)]
-            embeddings = await generator.generate_embeddings(texts)
-            
-            assert len(embeddings) == 10
-            # Should have been called in batches
-            assert mock_embedding_model.encode.call_count >= 2
-
-    def test_embedding_caching(self, mock_embedding_model):
-        """Test embedding caching functionality."""
-        with patch("sentence_transformers.SentenceTransformer") as mock_st:
-            mock_st.return_value = mock_embedding_model
-            
-            generator = EmbeddingGenerator(enable_cache=True)
-            
-            # Test cache operations
-            text = "test text"
-            embedding = [0.1, 0.2, 0.3]
-            
-            # Cache embedding
-            generator._cache_embedding(text, embedding)
-            
-            # Retrieve from cache
-            cached_embedding = generator._get_cached_embedding(text)
-            assert cached_embedding == embedding
-            
-            # Test cache miss
-            missing_embedding = generator._get_cached_embedding("not cached")
-            assert missing_embedding is None
-
-
-class TestDocumentService:
-    """Test document service orchestration."""
-
-    @pytest.fixture
-    def mock_document_service(self):
-        """Mock document service with dependencies."""
-        with patch("src.documents.service.get_chroma_client") as mock_chroma, \
-             patch("src.documents.service.get_embedding_generator") as mock_embeddings:
-            
-            # Mock ChromaDB client
-            mock_chroma.return_value.add_documents = AsyncMock()
-            mock_chroma.return_value.get_collection_info = AsyncMock(return_value={"count": 0})
-            
-            # Mock embedding generator
-            mock_embeddings.return_value.generate_embeddings = AsyncMock(
-                return_value=[[0.1, 0.2, 0.3]]
-            )
-            
-            service = DocumentService()
-            yield service
-
-    @pytest.mark.asyncio
-    async def test_document_upload_processing(self, mock_document_service, mock_file_upload):
-        """Test complete document upload and processing."""
-        with patch("src.documents.service.get_processor_for_file_type") as mock_processor:
-            # Mock processor
-            processor_mock = Mock()
-            processor_mock.extract_text = AsyncMock(return_value="Extracted text content")
-            processor_mock.extract_metadata = AsyncMock(return_value={"title": "Test Doc"})
-            mock_processor.return_value = processor_mock
-            
-            # Process document
-            result = await mock_document_service.process_uploaded_document(
-                file=mock_file_upload,
-                user_id="test_user",
-                metadata={"custom": "value"}
-            )
-            
-            assert "document_id" in result
-            assert result["status"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_document_chunking_pipeline(self, mock_document_service):
-        """Test document chunking pipeline."""
-        text = "This is a long document that should be chunked into smaller pieces. " * 20
-        
-        chunks = await mock_document_service._chunk_document_text(
-            text=text,
-            document_id="test_doc",
-            metadata={"page": 1}
+        processor = document_processor_factory.get_processor(
+            "test.pdf", "application/pdf"
         )
-        
-        assert len(chunks) > 1
-        assert all(chunk.document_id == "test_doc" for chunk in chunks)
+        assert processor is not None
 
-    @pytest.mark.asyncio
-    async def test_embedding_generation_pipeline(self, mock_document_service):
-        """Test embedding generation pipeline."""
-        from src.documents.models import DocumentChunk
-        
-        chunks = [
-            DocumentChunk(
-                chunk_id=str(uuid.uuid4()),
-                document_id="test_doc",
-                text="Sample text 1",
-                chunk_index=0,
-                metadata={}
-            ),
-            DocumentChunk(
-                chunk_id=str(uuid.uuid4()),
-                document_id="test_doc",
-                text="Sample text 2",
-                chunk_index=1,
-                metadata={}
-            ),
-        ]
-        
-        with patch.object(mock_document_service, '_generate_embeddings_for_chunks') as mock_embed:
-            mock_embed.return_value = chunks  # Return chunks with embeddings
-            
-            result_chunks = await mock_document_service._generate_embeddings_for_chunks(chunks)
-            assert len(result_chunks) == 2
+    def test_get_processor_txt(self):
+        """Test getting TXT processor."""
+        from src.documents.processors import document_processor_factory
 
-    @pytest.mark.asyncio
-    async def test_document_storage(self, mock_document_service):
-        """Test document storage in vector database."""
-        from src.documents.models import DocumentChunk
-        
-        chunks = [
-            DocumentChunk(
-                chunk_id=str(uuid.uuid4()),
-                document_id="test_doc",
-                text="Sample text",
-                chunk_index=0,
-                embeddings=[0.1, 0.2, 0.3],
-                metadata={"page": 1}
+        processor = document_processor_factory.get_processor("test.txt", "text/plain")
+        assert processor is not None
+
+    def test_get_processor_docx(self):
+        """Test getting DOCX processor."""
+        from src.documents.processors import document_processor_factory
+
+        processor = document_processor_factory.get_processor(
+            "test.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert processor is not None
+
+    def test_get_processor_csv(self):
+        """Test getting CSV processor."""
+        from src.documents.processors import document_processor_factory
+
+        processor = document_processor_factory.get_processor("test.csv", "text/csv")
+        assert processor is not None
+
+    def test_get_processor_unsupported(self):
+        """Test getting processor for unsupported type returns None."""
+        from src.documents.processors import document_processor_factory
+
+        processor = document_processor_factory.get_processor(
+            "test.exe", "application/octet-stream"
+        )
+        assert processor is None
+
+    def test_get_supported_types(self):
+        """Test listing supported file types."""
+        from src.documents.processors import document_processor_factory
+
+        supported = document_processor_factory.get_supported_types()
+        assert isinstance(supported, list)
+        assert len(supported) > 0
+
+    def test_validate_file_type_valid(self):
+        """Test file type validation for supported type."""
+        from src.documents.processors import document_processor_factory
+
+        assert (
+            document_processor_factory.validate_file_type("test.pdf", "application/pdf")
+            is True
+        )
+
+    def test_validate_file_type_invalid(self):
+        """Test file type validation for unsupported type."""
+        from src.documents.processors import document_processor_factory
+
+        assert (
+            document_processor_factory.validate_file_type(
+                "test.exe", "application/octet-stream"
             )
-        ]
-        
-        # Test storage
-        result = await mock_document_service._store_chunks_in_vector_db(chunks)
-        assert result is True
+            is False
+        )
+
+
+class TestTXTProcessor:
+    """Tests for TXT document processor."""
+
+    @pytest.fixture
+    def txt_file(self, tmp_path):
+        """Create a temporary text file."""
+        file_path = tmp_path / "test.txt"
+        file_path.write_text(
+            "This is a test document.\nWith multiple lines.\nFor testing purposes."
+        )
+        return str(file_path)
+
+    def test_can_process_txt(self):
+        """Test TXTProcessor recognizes .txt files."""
+        from src.documents.processors import TXTProcessor
+
+        processor = TXTProcessor()
+        assert processor.can_process("document.txt", "text/plain") is True
+
+    def test_can_process_non_txt(self):
+        """Test TXTProcessor rejects non-.txt files."""
+        from src.documents.processors import TXTProcessor
+
+        processor = TXTProcessor()
+        assert processor.can_process("document.pdf", "application/pdf") is False
+
+    def test_get_document_type(self):
+        """Test TXTProcessor returns TXT document type."""
+        from src.documents.processors import TXTProcessor
+
+        processor = TXTProcessor()
+        assert processor.get_document_type() == DocumentType.TXT
 
     @pytest.mark.asyncio
-    async def test_document_deletion(self, mock_document_service):
-        """Test document deletion."""
-        document_id = str(uuid.uuid4())
-        
-        with patch.object(mock_document_service.chroma_client, 'delete_documents') as mock_delete:
-            mock_delete.return_value = True
-            
-            result = await mock_document_service.delete_document(
-                document_id=document_id,
-                user_id="test_user"
-            )
-            
-            assert result is True
+    async def test_extract_text(self, txt_file):
+        """Test text extraction from .txt file."""
+        from src.documents.processors import TXTProcessor
 
-    @pytest.mark.asyncio
-    async def test_document_listing(self, mock_document_service):
-        """Test document listing with pagination."""
-        with patch.object(mock_document_service, 'list_documents') as mock_list:
-            mock_documents = [
-                {
-                    "document_id": str(uuid.uuid4()),
-                    "filename": "doc1.pdf",
-                    "status": "completed",
-                    "uploaded_by": "test_user"
-                },
-                {
-                    "document_id": str(uuid.uuid4()),
-                    "filename": "doc2.pdf", 
-                    "status": "completed",
-                    "uploaded_by": "test_user"
-                }
-            ]
-            
-            mock_list.return_value = {
-                "documents": mock_documents,
-                "total": 2,
-                "offset": 0,
-                "limit": 10,
-                "has_next": False
-            }
-            
-            result = await mock_document_service.list_documents(
-                user_id="test_user",
-                limit=10,
-                offset=0
-            )
-            
-            assert len(result["documents"]) == 2
-            assert result["total"] == 2
+        processor = TXTProcessor()
+        text, metadata = await processor.extract_text(txt_file)
+        assert "This is a test document" in text
+        assert isinstance(metadata, dict)
 
 
-class TestDocumentErrorHandling:
-    """Test document processing error handling."""
+class TestTextChunker:
+    """Tests for TextChunker."""
 
-    @pytest.mark.asyncio
-    async def test_unsupported_file_type(self):
-        """Test handling of unsupported file types."""
-        with pytest.raises(ValueError, match="Unsupported file type"):
-            get_processor_for_file_type("unsupported")
+    def test_count_tokens(self):
+        """Test token counting."""
+        from src.documents.chunking import TextChunker
 
-    @pytest.mark.asyncio
-    async def test_corrupted_file_processing(self, mock_document_service):
-        """Test handling of corrupted files."""
-        with patch("src.documents.service.get_processor_for_file_type") as mock_processor:
-            processor_mock = Mock()
-            processor_mock.extract_text = AsyncMock(side_effect=Exception("Corrupted file"))
-            mock_processor.return_value = processor_mock
-            
-            # Create mock corrupted file
-            corrupted_file = Mock()
-            corrupted_file.filename = "corrupted.pdf"
-            corrupted_file.read = AsyncMock(return_value=b"corrupted_content")
-            
-            with pytest.raises(Exception):
-                await mock_document_service.process_uploaded_document(
-                    file=corrupted_file,
-                    user_id="test_user"
-                )
+        chunker = TextChunker(chunk_size=100, chunk_overlap=20)
+        count = chunker.count_tokens("Hello world, this is a test.")
+        assert isinstance(count, int)
+        assert count > 0
 
-    @pytest.mark.asyncio
-    async def test_large_file_handling(self, mock_document_service):
-        """Test handling of very large files."""
-        # Test file size validation
-        large_file = Mock()
-        large_file.filename = "large_file.pdf"
-        large_file.size = 100 * 1024 * 1024  # 100MB
-        
-        # This should be handled by size limits in the actual implementation
-        assert large_file.size > 50 * 1024 * 1024  # Assume 50MB limit
+    def test_chunk_text_basic(self, sample_text_content):
+        """Test basic text chunking."""
+        from src.documents.chunking import TextChunker
 
-    @pytest.mark.asyncio
-    async def test_embedding_generation_failure(self, mock_document_service):
-        """Test handling of embedding generation failures."""
-        with patch.object(mock_document_service.embedding_generator, 'generate_embeddings') as mock_embed:
-            mock_embed.side_effect = Exception("Embedding service unavailable")
-            
-            chunks = [Mock(text="test text")]
-            
-            with pytest.raises(Exception):
-                await mock_document_service._generate_embeddings_for_chunks(chunks)
+        chunker = TextChunker(chunk_size=50, chunk_overlap=10)
+        doc_id = uuid.uuid4()
+        chunks = chunker.chunk_text(
+            sample_text_content,
+            document_id=doc_id,
+            metadata={"source_file": "test.txt", "document_type": "txt"},
+        )
+        assert len(chunks) > 0
+        for chunk in chunks:
+            assert isinstance(chunk, DocumentChunk)
+            assert chunk.document_id == doc_id
+            assert chunk.text
+            assert chunk.token_count > 0
 
+    def test_chunk_text_empty(self):
+        """Test chunking empty text returns empty list."""
+        from src.documents.chunking import TextChunker
 
-class TestDocumentAPI:
-    """Test document management API endpoints."""
+        chunker = TextChunker(chunk_size=100, chunk_overlap=20)
+        chunks = chunker.chunk_text(
+            "",
+            document_id=uuid.uuid4(),
+            metadata={"source_file": "empty.txt", "document_type": "txt"},
+        )
+        assert chunks == []
 
-    @pytest.mark.asyncio
-    async def test_upload_endpoint(self, test_client):
-        """Test document upload endpoint."""
-        # This would test the actual upload endpoint
-        # For now, we'll test the structure
-        upload_data = {
-            "file": ("test.pdf", b"fake_pdf_content", "application/pdf"),
-            "metadata": '{"title": "Test Document"}'
-        }
-        
-        # Mock the upload process
-        with patch("src.api.documents.process_uploaded_document") as mock_process:
-            mock_process.return_value = {
-                "document_id": str(uuid.uuid4()),
-                "status": "completed"
-            }
-            
-            # The actual test would make a request to the endpoint
-            # response = test_client.post("/api/v1/documents/upload", files=upload_data)
-            # assert response.status_code == 201
+    def test_chunk_indices_sequential(self, sample_text_content):
+        """Test that chunk indices are sequential starting from 0."""
+        from src.documents.chunking import TextChunker
 
-    @pytest.mark.asyncio
-    async def test_list_documents_endpoint(self, authenticated_client):
-        """Test document listing endpoint."""
-        with patch("src.api.documents.get_document_service") as mock_service:
-            mock_service.return_value.list_documents = AsyncMock(return_value={
-                "documents": [],
-                "total": 0,
-                "offset": 0,
-                "limit": 10,
-                "has_next": False
-            })
-            
-            # The actual test would make a request
-            # response = authenticated_client.get("/api/v1/documents")
-            # assert response.status_code == 200
+        chunker = TextChunker(chunk_size=50, chunk_overlap=10)
+        chunks = chunker.chunk_text(
+            sample_text_content,
+            document_id=uuid.uuid4(),
+            metadata={"source_file": "test.txt", "document_type": "txt"},
+        )
+        for i, chunk in enumerate(chunks):
+            assert chunk.chunk_index == i
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
+class TestRecursiveCharacterTextSplitter:
+    """Tests for RecursiveCharacterTextSplitter."""
+
+    def test_chunk_with_separators(self, sample_text_content):
+        """Test chunking with recursive separators."""
+        from src.documents.chunking import RecursiveCharacterTextSplitter
+
+        splitter = RecursiveCharacterTextSplitter(chunk_size=50, chunk_overlap=10)
+        chunks = splitter.chunk_text(
+            sample_text_content,
+            document_id=uuid.uuid4(),
+            metadata={"source_file": "test.txt", "document_type": "txt"},
+        )
+        assert len(chunks) > 0
+        for chunk in chunks:
+            assert isinstance(chunk, DocumentChunk)
+
+    def test_get_text_chunker_factory(self):
+        """Test the get_text_chunker factory function."""
+        from src.documents.chunking import get_text_chunker, TextChunker
+
+        chunker = get_text_chunker(strategy="recursive")
+        assert isinstance(chunker, TextChunker)
+
+
+class TestDocumentDeduplication:
+    """Tests for document deduplication service."""
+
+    def test_calculate_file_hash(self):
+        """Test file hash calculation."""
+        from src.documents.deduplication import DocumentDeduplicationService
+
+        service = DocumentDeduplicationService()
+        hash1 = service.calculate_file_hash(b"test content")
+        hash2 = service.calculate_file_hash(b"test content")
+        hash3 = service.calculate_file_hash(b"different content")
+        assert hash1 == hash2
+        assert hash1 != hash3
+        assert isinstance(hash1, str)
+
+    def test_calculate_file_hash_deterministic(self):
+        """Test hash is deterministic."""
+        from src.documents.deduplication import DocumentDeduplicationService
+
+        service = DocumentDeduplicationService()
+        content = b"reproducible content"
+        assert service.calculate_file_hash(content) == service.calculate_file_hash(
+            content
+        )

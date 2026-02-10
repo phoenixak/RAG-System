@@ -5,10 +5,13 @@ Handles text embedding generation with caching and batch processing.
 
 import asyncio
 import hashlib
+import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
+import redis.asyncio as redis_async
 import torch
 from sentence_transformers import SentenceTransformer
 
@@ -20,76 +23,126 @@ settings = get_settings()
 
 
 class EmbeddingCache(LoggerMixin):
-    """Simple in-memory cache for embeddings."""
+    """Redis-backed embedding cache with in-memory fallback."""
 
     def __init__(self, max_size: int = 10000):
-        self.cache: Dict[str, Tuple[List[float], float]] = {}
         self.max_size = max_size
+        self._redis_client = None
+        self._fallback_cache: Dict[str, Tuple[List[float], float]] = {}
+        self._use_fallback = False
+        self._logger = logging.getLogger(__name__)
+        self._key_prefix = "rag:embedding_cache:"
+        self._ttl = settings.cache_ttl_embeddings
+        self._init_redis()
+
+    def _init_redis(self) -> None:
+        """Initialize async Redis connection for embedding cache."""
+        try:
+            self._redis_client = redis_async.from_url(
+                settings.redis_url,
+                decode_responses=True,
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Redis unavailable for embedding cache, falling back to in-memory: %s",
+                e,
+            )
+            self._use_fallback = True
 
     def _get_cache_key(self, text: str, model_name: str) -> str:
         """Generate cache key for text and model."""
-        text_hash = hashlib.md5(text.encode()).hexdigest()
+        text_hash = hashlib.sha256(text.encode()).hexdigest()
         return f"{model_name}:{text_hash}"
 
-    def get(self, text: str, model_name: str) -> Optional[List[float]]:
+    async def get(self, text: str, model_name: str) -> Optional[List[float]]:
         """Get embedding from cache."""
         key = self._get_cache_key(text, model_name)
-        if key in self.cache:
-            embedding, timestamp = self.cache[key]
+        if self._use_fallback:
+            return self._get_fallback(key)
+        try:
+            data = await self._redis_client.get(f"{self._key_prefix}{key}")
+            if data is not None:
+                return json.loads(data)
+            return None
+        except Exception as e:
+            self._logger.warning(
+                "Redis GET failed for embedding cache, using fallback: %s", e
+            )
+            self._use_fallback = True
+            return self._get_fallback(key)
 
-            # Check if cache entry is still valid (1 hour TTL)
-            if time.time() - timestamp < settings.cache_ttl_embeddings:
+    async def set(self, text: str, model_name: str, embedding: List[float]) -> None:
+        """Store embedding in cache."""
+        key = self._get_cache_key(text, model_name)
+        if self._use_fallback:
+            self._set_fallback(key, embedding)
+            return
+        try:
+            data = json.dumps(embedding)
+            await self._redis_client.setex(
+                f"{self._key_prefix}{key}",
+                self._ttl,
+                data,
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Redis SET failed for embedding cache, using fallback: %s", e
+            )
+            self._use_fallback = True
+            self._set_fallback(key, embedding)
+
+    def _get_fallback(self, key: str) -> Optional[List[float]]:
+        """Get from in-memory fallback cache."""
+        if key in self._fallback_cache:
+            embedding, timestamp = self._fallback_cache[key]
+            if time.time() - timestamp < self._ttl:
                 return embedding
             else:
-                # Remove expired entry
-                del self.cache[key]
+                del self._fallback_cache[key]
         return None
 
-    def set(self, text: str, model_name: str, embedding: List[float]) -> None:
-        """Store embedding in cache."""
-        # Clear old entries if cache is full
-        if len(self.cache) >= self.max_size:
-            self._evict_old_entries()
-
-        key = self._get_cache_key(text, model_name)
-        self.cache[key] = (embedding, time.time())
-
-    def _evict_old_entries(self) -> None:
-        """Remove oldest 20% of cache entries."""
-        if not self.cache:
-            return
-
-        # Sort by timestamp and remove oldest entries
-        sorted_items = sorted(
-            self.cache.items(),
-            key=lambda x: x[1][1],  # Sort by timestamp
-        )
-
-        evict_count = len(self.cache) // 5  # Remove 20%
-        for key, _ in sorted_items[:evict_count]:
-            del self.cache[key]
-
-        self.logger.debug(
-            "Cache eviction completed",
-            evicted_count=evict_count,
-            remaining_count=len(self.cache),
-        )
+    def _set_fallback(self, key: str, embedding: List[float]) -> None:
+        """Set in in-memory fallback cache."""
+        if len(self._fallback_cache) >= self.max_size:
+            sorted_items = sorted(self._fallback_cache.items(), key=lambda x: x[1][1])
+            evict_count = max(1, len(self._fallback_cache) // 5)
+            for k, _ in sorted_items[:evict_count]:
+                del self._fallback_cache[k]
+        self._fallback_cache[key] = (embedding, time.time())
 
     def clear(self) -> None:
-        """Clear all cache entries."""
-        self.cache.clear()
+        """Clear all cache entries (sync-safe for use in close/cleanup)."""
+        self._fallback_cache.clear()
+        # Redis keys will expire via TTL; for immediate clear use async clear_async
+        if self._redis_client and not self._use_fallback:
+            try:
+                import redis as redis_sync
+
+                sync_client = redis_sync.from_url(
+                    settings.redis_url, decode_responses=True
+                )
+                cursor = 0
+                while True:
+                    cursor, keys = sync_client.scan(
+                        cursor=cursor, match=f"{self._key_prefix}*", count=100
+                    )
+                    if keys:
+                        sync_client.delete(*keys)
+                    if cursor == 0:
+                        break
+                sync_client.close()
+            except Exception as e:
+                self._logger.warning(
+                    "Redis sync CLEAR failed for embedding cache: %s", e
+                )
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         return {
-            "size": len(self.cache),
+            "backend": "redis" if not self._use_fallback else "in-memory",
+            "fallback_size": len(self._fallback_cache),
             "max_size": self.max_size,
-            "oldest_entry_age": (
-                time.time() - min(timestamp for _, timestamp in self.cache.values())
-                if self.cache
-                else 0
-            ),
-            "memory_usage_mb": len(str(self.cache)) / (1024 * 1024),  # Rough estimate
+            "ttl_seconds": self._ttl,
         }
 
 
@@ -160,21 +213,21 @@ class EmbeddingGenerator(LoggerMixin):
 
         # Check cache first
         if self.cache:
-            cached_embedding = self.cache.get(text, self.model_name)
+            cached_embedding = await self.cache.get(text, self.model_name)
             if cached_embedding is not None:
                 self.logger.debug("Embedding retrieved from cache")
                 return cached_embedding
 
         # Generate embedding
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             embedding = await loop.run_in_executor(
                 self.executor, self._generate_embedding_sync, text
             )
 
             # Cache the result
             if self.cache:
-                self.cache.set(text, self.model_name, embedding)
+                await self.cache.set(text, self.model_name, embedding)
 
             return embedding
 
@@ -207,7 +260,7 @@ class EmbeddingGenerator(LoggerMixin):
 
         if self.cache:
             for i, text in enumerate(texts):
-                cached_embedding = self.cache.get(text, self.model_name)
+                cached_embedding = await self.cache.get(text, self.model_name)
                 if cached_embedding is not None:
                     embeddings[i] = cached_embedding
                 else:
@@ -240,7 +293,7 @@ class EmbeddingGenerator(LoggerMixin):
                     )
 
                 # Generate embeddings for batch
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 batch_embeddings = await loop.run_in_executor(
                     self.executor, self._generate_embeddings_batch_sync, batch_texts
                 )
@@ -250,7 +303,7 @@ class EmbeddingGenerator(LoggerMixin):
                 # Cache new embeddings
                 if self.cache:
                     for text, embedding in zip(batch_texts, batch_embeddings):
-                        self.cache.set(text, self.model_name, embedding)
+                        await self.cache.set(text, self.model_name, embedding)
 
             # Fill in the new embeddings
             for i, embedding in zip(indices_to_process, new_embeddings):

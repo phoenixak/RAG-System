@@ -3,7 +3,7 @@ Search Models
 Pydantic models for search requests and responses.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -202,8 +202,8 @@ class ConversationContext(BaseModel):
     topics: List[str] = Field(default_factory=list)
 
     # Context metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ContextualSearchRequest(SearchRequest):
@@ -232,7 +232,7 @@ class SearchAnalytics(BaseModel):
     user_satisfaction: Optional[float] = None  # 0-1 rating
 
     # Timestamp
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class SearchCache(BaseModel):
@@ -248,13 +248,13 @@ class SearchCache(BaseModel):
     search_time_ms: float
 
     # Cache metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ttl_seconds: int = Field(default=1800)  # 30 minutes
     hit_count: int = Field(default=0)
 
     def is_expired(self) -> bool:
         """Check if cache entry is expired."""
-        age = (datetime.utcnow() - self.created_at).total_seconds()
+        age = (datetime.now(timezone.utc) - self.created_at).total_seconds()
         return age > self.ttl_seconds
 
 

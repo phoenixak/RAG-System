@@ -3,7 +3,8 @@ Authentication API Endpoints
 Login, logout, token refresh, and user management endpoints.
 """
 
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -24,7 +25,7 @@ from src.auth.models import (
     User,
     UserRole,
 )
-from src.auth.security import verify_password
+from src.auth.security import get_current_user, hash_password, verify_password
 from src.core.config import get_settings
 from src.core.logging import get_logger, log_security_event
 
@@ -36,95 +37,40 @@ security = HTTPBearer()
 
 # Temporary in-memory user store for Phase 1
 # TODO: Replace with actual database in Phase 2
-TEMP_USERS = {
-    "admin@example.com": {
-        "id": "550e8400-e29b-41d4-a716-446655440001",
-        "email": "admin@example.com",
-        "password_hash": "$2b$12$DDiv0KIkJECtopamHRsoMeP0m2fWXAxWpU.Bfu8ZvGwzFecY2zsGS",  # "admin123!"
-        "first_name": "Admin",
-        "last_name": "User",
-        "role": UserRole.ADMIN,
-        "is_active": True,
-        "created_at": datetime.utcnow(),
-    },
-    "user@example.com": {
-        "id": "550e8400-e29b-41d4-a716-446655440002",
-        "email": "user@example.com",
-        "password_hash": "$2b$12$vCkOSlxIK5lPah/s/anjF.YP3SQVDRXqSKK8leDgPlYzK0yjXcDP6",  # "password123!"
-        "first_name": "Test",
-        "last_name": "User",
-        "role": UserRole.STANDARD_USER,
-        "is_active": True,
-        "created_at": datetime.utcnow(),
-    },
-}
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-) -> User:
-    """Get current authenticated user from JWT token."""
-    try:
-        # Extract token from credentials
-        token = credentials.credentials
+def _create_demo_users() -> dict:
+    """Create demo users from environment variables. Never store credentials in source."""
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123!")
+    user_email = os.environ.get("USER_EMAIL", "user@example.com")
+    user_password = os.environ.get("USER_PASSWORD", "password123!")
 
-        # Verify token
-        token_data = verify_access_token(token)
+    return {
+        admin_email: {
+            "id": "550e8400-e29b-41d4-a716-446655440001",
+            "email": admin_email,
+            "password_hash": hash_password(admin_password),
+            "first_name": "Admin",
+            "last_name": "User",
+            "role": UserRole.ADMIN,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+        },
+        user_email: {
+            "id": "550e8400-e29b-41d4-a716-446655440002",
+            "email": user_email,
+            "password_hash": hash_password(user_password),
+            "first_name": "Demo",
+            "last_name": "User",
+            "role": UserRole.STANDARD_USER,
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc),
+        },
+    }
 
-        # Get user from temporary store
-        # TODO: Replace with database query
-        user_data = None
-        for email, data in TEMP_USERS.items():
-            if data["id"] == token_data.user_id:
-                user_data = data
-                break
 
-        if not user_data:
-            log_security_event(
-                "user_not_found_for_valid_token",
-                user_id=token_data.user_id,
-                details={"email": token_data.email},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
-            )
-
-        if not user_data["is_active"]:
-            log_security_event(
-                "inactive_user_access_attempt",
-                user_id=token_data.user_id,
-                details={"email": token_data.email},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user"
-            )
-
-        # Create User object
-        user = User(
-            id=user_data["id"],
-            email=user_data["email"],
-            first_name=user_data["first_name"],
-            last_name=user_data["last_name"],
-            role=user_data["role"],
-            is_active=user_data["is_active"],
-            permissions=ROLE_PERMISSIONS.get(user_data["role"], []),
-            created_at=user_data["created_at"],
-        )
-
-        return user
-
-    except JWTError as e:
-        log_security_event("invalid_token_used", details={"error": str(e)})
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except Exception as e:
-        logger.error("Authentication error", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed"
-        )
+TEMP_USERS = _create_demo_users()
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -186,7 +132,7 @@ async def login(login_data: LoginRequest):
 
         # Update last login
         # TODO: Update in database
-        user_data["last_login"] = datetime.utcnow()
+        user_data["last_login"] = datetime.now(timezone.utc)
 
         # Create user object
         user = User(

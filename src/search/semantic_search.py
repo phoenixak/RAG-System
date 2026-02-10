@@ -4,7 +4,7 @@ Implements vector-based similarity search using ChromaDB and sentence transforme
 """
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.core.config import get_settings
 from src.core.logging import LoggerMixin
@@ -344,7 +344,7 @@ class SemanticSearchEngine(LoggerMixin):
 
         return results
 
-    async def get_search_stats(self) -> Dict[str, any]:
+    async def get_search_stats(self) -> Dict[str, Any]:
         """
         Get semantic search engine statistics.
 

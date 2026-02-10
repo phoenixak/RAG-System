@@ -286,9 +286,37 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from src.auth.models import TokenData
+from src.auth.models import Permission, ROLE_PERMISSIONS, TokenData, UserRole
 
 security = HTTPBearer()
+
+
+def require_permission(permission: Permission):
+    """
+    FastAPI dependency factory that enforces role-based permission checks.
+    Returns a dependency that validates the current user has the required permission.
+    """
+
+    async def _check_permission(
+        current_user: Annotated[TokenData, Depends(get_current_user)],
+    ) -> TokenData:
+        role_permissions = ROLE_PERMISSIONS.get(current_user.role, [])
+        if permission not in role_permissions:
+            log_security_event(
+                "permission_denied",
+                details={
+                    "user_id": current_user.user_id,
+                    "role": current_user.role.value,
+                    "required_permission": permission.value,
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission denied: {permission.value} required",
+            )
+        return current_user
+
+    return _check_permission
 
 
 async def get_current_user(

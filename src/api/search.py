@@ -5,10 +5,11 @@ REST API endpoints for search and retrieval functionality.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 
 from src.auth.security import get_current_user
+from src.core.config import get_settings
 from src.core.logging import get_logger
 from src.search.models import (
     ContextualSearchRequest,
@@ -25,11 +26,28 @@ from src.search.service import get_search_service
 router = APIRouter()
 security = HTTPBearer()
 logger = get_logger(__name__)
+_settings = get_settings()
+
+# Import shared rate limiter for route-level limits
+from src.core.rate_limit import RATE_LIMIT_AUTHENTICATED, SLOWAPI_AVAILABLE, limiter
+
+
+def _apply_rate_limit(rate: str):
+    """Return the limiter decorator if available, otherwise a no-op."""
+    if SLOWAPI_AVAILABLE and limiter is not None:
+        return limiter.limit(rate)
+
+    def _noop(func):
+        return func
+
+    return _noop
 
 
 @router.post("/semantic", response_model=SearchResponse)
+@_apply_rate_limit(RATE_LIMIT_AUTHENTICATED)
 async def semantic_search(
     request: SemanticSearchRequest,
+    http_request: Request,
     current_user: dict = Depends(get_current_user),
 ) -> SearchResponse:
     """
@@ -75,8 +93,10 @@ async def semantic_search(
 
 
 @router.post("/hybrid", response_model=SearchResponse)
+@_apply_rate_limit(RATE_LIMIT_AUTHENTICATED)
 async def hybrid_search(
     request: HybridSearchRequest,
+    http_request: Request,
     current_user: dict = Depends(get_current_user),
 ) -> SearchResponse:
     """
@@ -126,8 +146,10 @@ async def hybrid_search(
 
 
 @router.post("/contextual", response_model=SearchResponse)
+@_apply_rate_limit(RATE_LIMIT_AUTHENTICATED)
 async def contextual_search(
     request: ContextualSearchRequest,
+    http_request: Request,
     current_user: dict = Depends(get_current_user),
 ) -> SearchResponse:
     """
@@ -345,7 +367,7 @@ async def clear_search_cache(
         )
 
         search_service = get_search_service()
-        search_service.clear_cache()
+        await search_service.clear_cache()
 
         logger.info(
             "Search cache cleared successfully",

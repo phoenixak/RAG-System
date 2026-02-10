@@ -24,7 +24,7 @@ services:
       - postgres
       - redis
       - chromadb
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn run:create_app --host 0.0.0.0 --port 8000 --reload --factory
     networks:
       - rag-network
 
@@ -39,7 +39,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     networks:
       - rag-network
 
@@ -68,12 +67,12 @@ services:
     networks:
       - rag-network
 
-  # Streamlit Frontend (Phase 3)
+  # Streamlit Frontend
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
-      target: development
+      dockerfile: Dockerfile
+    command: ["streamlit", "run", "run.py", "--server.port=8501", "--server.address=0.0.0.0"]
     ports:
       - "8501:8501"
     volumes:
@@ -85,7 +84,6 @@ services:
       - API_BASE_URL=http://api:8000
     depends_on:
       - api
-    command: streamlit run frontend/main.py
     networks:
       - rag-network
     profiles:

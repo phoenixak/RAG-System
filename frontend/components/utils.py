@@ -6,8 +6,9 @@ Common utility functions for the Streamlit frontend.
 import base64
 import hashlib
 import json
+import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
 import streamlit as st
@@ -16,7 +17,7 @@ import streamlit as st
 def format_timestamp(timestamp: Union[int, float]) -> str:
     """Format timestamp for display."""
     try:
-        dt = datetime.fromtimestamp(timestamp)
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         return "Unknown"
@@ -25,7 +26,7 @@ def format_timestamp(timestamp: Union[int, float]) -> str:
 def format_time_ago(timestamp: Union[int, float]) -> str:
     """Format timestamp as time ago (e.g., '2 hours ago')."""
     try:
-        dt = datetime.fromtimestamp(timestamp)
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
         now = datetime.now()
         diff = now - dt
 
@@ -75,8 +76,6 @@ def highlight_search_terms(text: str, query: str) -> str:
     for term in terms:
         if term in text.lower():
             # Find all occurrences and replace with highlighted version
-            import re
-
             pattern = re.compile(re.escape(term), re.IGNORECASE)
             highlighted_text = pattern.sub(f"**{term}**", highlighted_text)
 
@@ -92,16 +91,12 @@ def show_success_message(message: str, duration: int = 3):
     """Show a success message that disappears after duration."""
     success_placeholder = st.empty()
     success_placeholder.success(message)
-    time.sleep(duration)
-    success_placeholder.empty()
 
 
 def show_error_message(message: str, duration: int = 5):
     """Show an error message that disappears after duration."""
     error_placeholder = st.empty()
     error_placeholder.error(message)
-    time.sleep(duration)
-    error_placeholder.empty()
 
 
 def create_download_link(
@@ -156,7 +151,7 @@ def safe_json_dumps(obj: Any, default: str = "{}") -> str:
 
 def get_file_hash(file_content: bytes) -> str:
     """Generate hash for file content."""
-    return hashlib.md5(file_content).hexdigest()
+    return hashlib.sha256(file_content).hexdigest()
 
 
 def paginate_results(results: List[Any], page: int, per_page: int) -> tuple:
@@ -275,15 +270,15 @@ def format_document_type(filename: str) -> str:
     return f"{icon} {extension.upper()}"
 
 
-def create_info_box(title: str, content: str, type: str = "info"):
+def create_info_box(title: str, content: str, box_type: str = "info"):
     """Create an information box."""
-    if type == "info":
+    if box_type == "info":
         st.info(f"**{title}**\n\n{content}")
-    elif type == "warning":
+    elif box_type == "warning":
         st.warning(f"**{title}**\n\n{content}")
-    elif type == "error":
+    elif box_type == "error":
         st.error(f"**{title}**\n\n{content}")
-    elif type == "success":
+    elif box_type == "success":
         st.success(f"**{title}**\n\n{content}")
 
 

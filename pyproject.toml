@@ -49,7 +49,7 @@ dependencies = [
     "email-validator==2.1.0",
 
     # Database and storage
-    "redis==5.0.1",
+    "redis[hiredis]>=5.0.0",
     "asyncpg==0.29.0",
     "sqlalchemy==2.0.23",
     "chromadb==0.4.15",
@@ -68,6 +68,9 @@ dependencies = [
 
     # Frontend dependencies
     "streamlit==1.28.1",
+
+    # Rate limiting
+    "slowapi>=0.1.9",
 
     # Logging and monitoring
     "structlog==23.2.0",
@@ -119,12 +122,12 @@ Issues = "https://github.com/enterprise-rag/enterprise-rag-system/issues"
 Changelog = "https://github.com/enterprise-rag/enterprise-rag-system/blob/main/CHANGELOG.md"
 
 [project.scripts]
-rag-server = "app.main:main"
-rag-web = "app.web.main:main"
+rag-server = "src.main:main"
+rag-web = "frontend.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app*"]
+include = ["src*", "frontend*"]
 exclude = ["tests*"]
 
 [tool.black]
@@ -149,7 +152,7 @@ extend-exclude = '''
 profile = "black"
 multi_line_output = 3
 line_length = 88
-known_first_party = ["app"]
+known_first_party = ["src", "frontend"]
 known_third_party = ["fastapi", "pydantic", "streamlit", "chromadb"]
 
 [tool.mypy]

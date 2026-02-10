@@ -34,7 +34,7 @@ def setup_env():
 
     # Install dependencies
     print("📦 Installing Python dependencies...")
-    run_command("pip install -r requirements.txt")
+    run_command('pip install -e ".[dev]"')
 
     print("✅ Development environment setup complete!")
     print("📝 Next steps:")
@@ -49,7 +49,7 @@ def start_services():
     print("⏳ Waiting for services to be ready...")
     run_command("sleep 5")
     print("🔄 Starting API server...")
-    run_command("uvicorn src.main:app --reload --host 0.0.0.0 --port 8000")
+    run_command("uvicorn run:create_app --factory --reload --host 0.0.0.0 --port 8000")
 
 
 def stop_services():

@@ -40,6 +40,15 @@ sys.path.insert(0, str(project_root))
 # ============================================================================
 
 
+def create_app():
+    """Factory function for uvicorn --factory flag. Returns just the ASGI app."""
+    result = create_fastapi_app()
+    if result is None:
+        raise RuntimeError("Failed to create FastAPI app")
+    app, _settings = result
+    return app
+
+
 def create_fastapi_app():
     """Create and configure the FastAPI application."""
     from fastapi import FastAPI, HTTPException, Request
@@ -64,6 +73,17 @@ def create_fastapi_app():
             "Make sure all backend dependencies are installed and src/ directory exists"
         )
         return None
+
+    # --- Rate limiting setup with slowapi ---
+    try:
+        from slowapi.errors import RateLimitExceeded
+
+        from src.core.rate_limit import SLOWAPI_AVAILABLE, limiter as shared_limiter
+
+        rate_limiting_available = SLOWAPI_AVAILABLE and shared_limiter is not None
+    except ImportError:
+        rate_limiting_available = False
+        shared_limiter = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -133,14 +153,14 @@ def create_fastapi_app():
                 embedding_generator = get_embedding_generator()
                 if hasattr(embedding_generator, "close"):
                     await embedding_generator.close()
-            except:
+            except Exception:
                 pass
             # Close chroma client
             try:
                 chroma_client = get_chroma_client()
                 if hasattr(chroma_client, "close"):
                     await chroma_client.close()
-            except:
+            except Exception:
                 pass
 
             logger.info("All services closed successfully")
@@ -159,6 +179,13 @@ def create_fastapi_app():
         redoc_url="/redoc" if settings.debug else None,
         lifespan=lifespan,
     )
+
+    # Attach rate limiter to app state and register error handler
+    if rate_limiting_available and shared_limiter is not None:
+        from slowapi import _rate_limit_exceeded_handler as _rl_handler
+
+        app.state.limiter = shared_limiter
+        app.add_exception_handler(RateLimitExceeded, _rl_handler)
 
     # Add CORS middleware
     app.add_middleware(
@@ -470,7 +497,10 @@ def show_main_content():
             )
     else:
         # Default to chat page
-        show_main_content()
+        st.session_state.current_page = "chat"
+        module = __import__("frontend.pages.chat", fromlist=["show_chat_interface"])
+        func = getattr(module, "show_chat_interface")
+        func()
 
 
 # ============================================================================
@@ -632,7 +662,7 @@ run_streamlit_app()
                 response = requests.get(url, timeout=2)
                 if response.status_code == 200:
                     return True
-            except:
+            except Exception:
                 pass
             time.sleep(1)
         return False

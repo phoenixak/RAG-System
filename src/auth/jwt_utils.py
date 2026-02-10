@@ -3,11 +3,14 @@ JWT Utilities
 Token generation, validation, and management for authentication.
 """
 
-from datetime import datetime, timedelta
+import logging
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
 import jwt
+import redis as redis_sync
 
 from src.auth.models import ROLE_PERMISSIONS, Permission, TokenData, UserRole
 from src.core.config import get_settings
@@ -32,8 +35,28 @@ class TokenManager:
         self.access_token_expire_minutes = settings.access_token_expire_minutes
         self.refresh_token_expire_days = settings.refresh_token_expire_days
 
-        # In-memory blacklist for revoked tokens (use Redis in production)
-        self._blacklisted_tokens = set()
+        # Redis-backed blacklist for revoked tokens with in-memory fallback
+        self._redis_client = None
+        self._use_fallback = False
+        self._fallback_blacklist: set = set()
+        self._redis_key_prefix = "rag:token_blacklist:"
+        self._bl_logger = logging.getLogger(__name__)
+        self._init_redis()
+
+    def _init_redis(self) -> None:
+        """Initialize sync Redis connection for token blacklist."""
+        try:
+            self._redis_client = redis_sync.from_url(
+                settings.redis_url,
+                decode_responses=True,
+            )
+            self._redis_client.ping()
+        except Exception as e:
+            self._bl_logger.warning(
+                "Redis unavailable for token blacklist, falling back to in-memory: %s",
+                e,
+            )
+            self._use_fallback = True
 
     def create_access_token(
         self,
@@ -48,9 +71,7 @@ class TokenManager:
             permissions = ROLE_PERMISSIONS.get(role, [])
 
         # FIX: Use consistent UTC time handling for JWT timestamps
-        import time
-
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc)
         expire_utc = now_utc + timedelta(minutes=self.access_token_expire_minutes)
 
         # Use explicit UTC timestamps to avoid timezone issues
@@ -88,9 +109,7 @@ class TokenManager:
         """Create a refresh token for the user."""
 
         # FIX: Use consistent UTC time handling for JWT timestamps
-        import time
-
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc)
         expire_utc = now_utc + timedelta(days=self.refresh_token_expire_days)
 
         # Use explicit UTC timestamps to avoid timezone issues
@@ -132,7 +151,7 @@ class TokenManager:
 
         try:
             # COMPREHENSIVE DEBUG: Full token validation analysis
-            now_utc = datetime.utcnow()
+            now_utc = datetime.now(timezone.utc)
 
             # First decode without verification to see token contents
             try:
@@ -141,8 +160,12 @@ class TokenManager:
                 )
                 exp_timestamp = payload_preview.get("exp", 0)
                 iat_timestamp = payload_preview.get("iat", 0)
-                exp_datetime_utc = datetime.utcfromtimestamp(exp_timestamp)
-                iat_datetime_utc = datetime.utcfromtimestamp(iat_timestamp)
+                exp_datetime_utc = datetime.fromtimestamp(
+                    exp_timestamp, tz=timezone.utc
+                )
+                iat_datetime_utc = datetime.fromtimestamp(
+                    iat_timestamp, tz=timezone.utc
+                )
 
                 logger.info(
                     f"Token issued at: {iat_datetime_utc.isoformat()} UTC (timestamp: {iat_timestamp})"
@@ -177,11 +200,11 @@ class TokenManager:
 
             # Debug: Check token expiration (FIX: Use UTC for both timestamps)
             exp_timestamp = payload.get("exp", 0)
-            exp_datetime_utc = datetime.utcfromtimestamp(exp_timestamp)
+            exp_datetime_utc = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
 
             # Check if token is blacklisted
             jti = payload.get("jti")
-            if jti and jti in self._blacklisted_tokens:
+            if jti and self._is_token_blacklisted(jti):
                 log_security_event(
                     "token_blacklisted_used",
                     user_id=payload.get("user_id"),
@@ -263,12 +286,50 @@ class TokenManager:
 
         return token_data
 
+    def _is_token_blacklisted(self, jti: str) -> bool:
+        """Check if a token JTI is blacklisted."""
+        if self._use_fallback:
+            return jti in self._fallback_blacklist
+        try:
+            return bool(
+                self._redis_client.sismember(f"{self._redis_key_prefix}set", jti)
+            )
+        except Exception as e:
+            self._bl_logger.warning(
+                "Redis SISMEMBER failed for token blacklist, using fallback: %s", e
+            )
+            self._use_fallback = True
+            return jti in self._fallback_blacklist
+
+    def _add_to_blacklist(self, jti: str, ttl_seconds: int) -> None:
+        """Add a token JTI to the blacklist with TTL."""
+        if self._use_fallback:
+            self._fallback_blacklist.add(jti)
+            return
+        try:
+            # Store in a Redis SET for SISMEMBER lookups
+            self._redis_client.sadd(f"{self._redis_key_prefix}set", jti)
+            # Also store as individual key with TTL so it auto-expires
+            self._redis_client.setex(f"{self._redis_key_prefix}{jti}", ttl_seconds, "1")
+        except Exception as e:
+            self._bl_logger.warning(
+                "Redis SADD failed for token blacklist, using fallback: %s", e
+            )
+            self._use_fallback = True
+            self._fallback_blacklist.add(jti)
+
     def revoke_token(self, token: str) -> None:
         """Revoke a token by adding it to the blacklist."""
 
         try:
             token_data = self.decode_token(token)
-            self._blacklisted_tokens.add(token_data.jti)
+
+            # Calculate remaining TTL for the token
+            remaining_seconds = max(0, token_data.exp - int(time.time()))
+            # Use at least 1 hour TTL to cover clock skew
+            ttl = max(remaining_seconds, 3600)
+
+            self._add_to_blacklist(token_data.jti, ttl)
 
             log_security_event(
                 "token_revoked",
@@ -290,15 +351,30 @@ class TokenManager:
                 payload = jwt.decode(token, options={"verify_signature": False})
                 jti = payload.get("jti")
                 if jti:
-                    self._blacklisted_tokens.add(jti)
+                    exp = payload.get("exp", 0)
+                    remaining = max(0, exp - int(time.time()))
+                    ttl = max(remaining, 3600)
+                    self._add_to_blacklist(jti, ttl)
             except Exception:
                 pass  # Token is completely malformed
 
     def cleanup_blacklist(self) -> None:
-        """Clean up expired tokens from blacklist."""
-        # This is a simplified implementation
-        # In production, use Redis with TTL or a database cleanup job
-        pass
+        """Clean up expired tokens from blacklist.
+
+        For Redis, expired individual keys auto-expire via TTL.
+        This cleans up stale entries from the SET.
+        """
+        if self._use_fallback:
+            return
+        try:
+            # Get all members of the blacklist set
+            members = self._redis_client.smembers(f"{self._redis_key_prefix}set")
+            for jti in members:
+                # If the individual TTL key has expired, remove from SET
+                if not self._redis_client.exists(f"{self._redis_key_prefix}{jti}"):
+                    self._redis_client.srem(f"{self._redis_key_prefix}set", jti)
+        except Exception as e:
+            self._bl_logger.warning("Redis cleanup failed for token blacklist: %s", e)
 
     def get_token_info(self, token: str) -> Dict[str, Any]:
         """Get information about a token without full validation."""
@@ -312,12 +388,16 @@ class TokenManager:
                 "email": payload.get("email"),
                 "role": payload.get("role"),
                 "token_type": payload.get("token_type"),
-                "issued_at": datetime.utcfromtimestamp(payload.get("iat", 0)),
-                "expires_at": datetime.utcfromtimestamp(payload.get("exp", 0)),
+                "issued_at": datetime.fromtimestamp(
+                    payload.get("iat", 0), tz=timezone.utc
+                ),
+                "expires_at": datetime.fromtimestamp(
+                    payload.get("exp", 0), tz=timezone.utc
+                ),
                 "jti": payload.get("jti"),
-                "is_expired": datetime.utcnow()
-                > datetime.utcfromtimestamp(payload.get("exp", 0)),
-                "is_blacklisted": payload.get("jti") in self._blacklisted_tokens,
+                "is_expired": datetime.now(timezone.utc)
+                > datetime.fromtimestamp(payload.get("exp", 0), tz=timezone.utc),
+                "is_blacklisted": self._is_token_blacklisted(payload.get("jti", "")),
             }
 
         except Exception as e:

@@ -21,8 +21,8 @@ RUN groupadd --gid 1000 appuser && \
 WORKDIR /app
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
 
 # Development stage
 FROM base as development
@@ -48,18 +48,19 @@ USER appuser
 EXPOSE 8000
 
 # Development command (will be overridden by docker-compose)
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "run:create_app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--factory"]
 
 # Production stage
 FROM base as production
 
 # Copy only necessary files
-COPY requirements.txt .
+COPY pyproject.toml .
 COPY src/ ./src/
+COPY run.py .
 COPY .env.example ./.env
 
-# Create uploads directory
-RUN mkdir -p uploads && \
+RUN pip install --no-cache-dir . && \
+    mkdir -p uploads && \
     chown -R appuser:appuser /app
 
 USER appuser
@@ -72,7 +73,7 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Production command
-CMD ["gunicorn", "src.main:app", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+CMD ["uvicorn", "run:create_app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--factory"]
 
 # Testing stage
 FROM development as testing

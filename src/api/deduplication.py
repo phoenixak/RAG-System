@@ -5,9 +5,11 @@ Provides endpoints for managing document deduplication and cleanup operations.
 
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from src.auth.models import User
+from src.auth.security import get_current_user
 from src.core.config import get_settings
 from src.core.logging import get_logger
 from src.documents.deduplication import get_deduplication_service
@@ -75,7 +77,7 @@ class CleanupRequest(BaseModel):
 
 
 @router.get("/scan", response_model=DuplicateScanResponse)
-async def scan_for_duplicates():
+async def scan_for_duplicates(current_user: User = Depends(get_current_user)):
     """
     Scan for duplicate documents in the system.
 
@@ -138,7 +140,9 @@ async def scan_for_duplicates():
 
 
 @router.post("/cleanup", response_model=CleanupStats)
-async def cleanup_duplicates(request: CleanupRequest):
+async def cleanup_duplicates(
+    request: CleanupRequest, current_user: User = Depends(get_current_user)
+):
     """
     Clean up duplicate documents from the system.
 
@@ -180,7 +184,7 @@ async def cleanup_duplicates(request: CleanupRequest):
 
 
 @router.post("/cleanup-orphaned", response_model=CleanupStats)
-async def cleanup_orphaned_files():
+async def cleanup_orphaned_files(current_user: User = Depends(get_current_user)):
     """
     Clean up orphaned files in the uploads directory.
 
@@ -218,7 +222,9 @@ async def cleanup_orphaned_files():
 
 
 @router.get("/check/{file_hash}")
-async def check_duplicate_by_hash(file_hash: str):
+async def check_duplicate_by_hash(
+    file_hash: str, current_user: User = Depends(get_current_user)
+):
     """
     Check if a document with the given hash already exists.
 
@@ -254,7 +260,7 @@ async def check_duplicate_by_hash(file_hash: str):
 
 
 @router.get("/statistics")
-async def get_deduplication_statistics():
+async def get_deduplication_statistics(current_user: User = Depends(get_current_user)):
     """
     Get statistics about duplicates in the system.
 

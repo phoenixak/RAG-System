@@ -3,8 +3,8 @@ Conversation Context Management
 Handles conversation sessions and context-aware search.
 """
 
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from src.core.config import get_settings
@@ -30,7 +30,7 @@ class ConversationMemory:
 
         if session:
             # Check if session is expired
-            age = (datetime.utcnow() - session.updated_at).total_seconds()
+            age = (datetime.now(timezone.utc) - session.updated_at).total_seconds()
             if age > self.session_ttl:
                 del self.sessions[session_id]
                 return None
@@ -53,7 +53,7 @@ class ConversationMemory:
 
     def update_session(self, session: ConversationContext) -> None:
         """Update an existing session."""
-        session.updated_at = datetime.utcnow()
+        session.updated_at = datetime.now(timezone.utc)
         self.sessions[session.session_id] = session
 
     def delete_session(self, session_id: str) -> bool:
@@ -76,9 +76,9 @@ class ConversationMemory:
         for session_id, _ in sorted_sessions[:remove_count]:
             del self.sessions[session_id]
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get memory statistics."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         active_sessions = 0
         for session in self.sessions.values():
@@ -388,7 +388,7 @@ class ConversationManager(LoggerMixin):
 
         return query
 
-    def get_session_summary(self, session_id: str) -> Optional[Dict[str, any]]:
+    def get_session_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a summary of the conversation session.
 
@@ -431,7 +431,7 @@ class ConversationManager(LoggerMixin):
 
         return success
 
-    def get_conversation_stats(self) -> Dict[str, any]:
+    def get_conversation_stats(self) -> Dict[str, Any]:
         """
         Get conversation management statistics.
 

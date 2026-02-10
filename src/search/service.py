@@ -4,8 +4,12 @@ Main search orchestration service that coordinates all search engines.
 """
 
 import hashlib
+import json
+import logging
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import redis.asyncio as redis_async
 
 from src.core.config import get_settings
 from src.core.logging import LoggerMixin
@@ -30,12 +34,30 @@ settings = get_settings()
 
 
 class SearchCache:
-    """Simple in-memory search result cache."""
+    """Redis-backed search result cache with in-memory fallback."""
 
     def __init__(self, max_size: int = 1000, ttl_seconds: int = 1800):
-        self.cache: Dict[str, Tuple[SearchResponse, float]] = {}
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
+        self._redis_client = None
+        self._fallback_cache: Dict[str, Tuple[SearchResponse, float]] = {}
+        self._use_fallback = False
+        self._logger = logging.getLogger(__name__)
+        self._key_prefix = "rag:search_cache:"
+        self._init_redis()
+
+    def _init_redis(self) -> None:
+        """Initialize async Redis connection for search cache."""
+        try:
+            self._redis_client = redis_async.from_url(
+                settings.redis_url,
+                decode_responses=True,
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Redis unavailable for search cache, falling back to in-memory: %s", e
+            )
+            self._use_fallback = True
 
     def _generate_cache_key(
         self,
@@ -50,53 +72,84 @@ class SearchCache:
             "params": sorted(params.items()),
         }
         key_string = str(key_data)
-        return hashlib.md5(key_string.encode()).hexdigest()
+        return hashlib.sha256(key_string.encode()).hexdigest()
 
-    def get(self, key: str) -> Optional[SearchResponse]:
-        """Get cached search response."""
-        if key in self.cache:
-            response, timestamp = self.cache[key]
+    async def get(self, key: str) -> Optional[SearchResponse]:
+        """Get cached search response from Redis or fallback."""
+        if self._use_fallback:
+            return self._get_fallback(key)
+        try:
+            data = await self._redis_client.get(f"{self._key_prefix}{key}")
+            if data is not None:
+                return SearchResponse.model_validate_json(data)
+            return None
+        except Exception as e:
+            self._logger.warning(
+                "Redis GET failed for search cache, using fallback: %s", e
+            )
+            self._use_fallback = True
+            return self._get_fallback(key)
 
-            # Check if cache entry is still valid
+    async def set(self, key: str, response: SearchResponse) -> None:
+        """Cache search response in Redis or fallback."""
+        if self._use_fallback:
+            self._set_fallback(key, response)
+            return
+        try:
+            data = response.model_dump_json()
+            await self._redis_client.setex(
+                f"{self._key_prefix}{key}",
+                self.ttl_seconds,
+                data,
+            )
+        except Exception as e:
+            self._logger.warning(
+                "Redis SET failed for search cache, using fallback: %s", e
+            )
+            self._use_fallback = True
+            self._set_fallback(key, response)
+
+    def _get_fallback(self, key: str) -> Optional[SearchResponse]:
+        """Get from in-memory fallback cache."""
+        if key in self._fallback_cache:
+            response, timestamp = self._fallback_cache[key]
             if time.time() - timestamp < self.ttl_seconds:
                 return response
             else:
-                # Remove expired entry
-                del self.cache[key]
-
+                del self._fallback_cache[key]
         return None
 
-    def set(self, key: str, response: SearchResponse) -> None:
-        """Cache search response."""
-        # Clear old entries if cache is full
-        if len(self.cache) >= self.max_size:
-            self._evict_old_entries()
+    def _set_fallback(self, key: str, response: SearchResponse) -> None:
+        """Set in in-memory fallback cache."""
+        if len(self._fallback_cache) >= self.max_size:
+            sorted_items = sorted(self._fallback_cache.items(), key=lambda x: x[1][1])
+            evict_count = max(1, len(self._fallback_cache) // 5)
+            for k, _ in sorted_items[:evict_count]:
+                del self._fallback_cache[k]
+        self._fallback_cache[key] = (response, time.time())
 
-        self.cache[key] = (response, time.time())
-
-    def _evict_old_entries(self) -> None:
-        """Remove oldest 20% of cache entries."""
-        if not self.cache:
-            return
-
-        # Sort by timestamp and remove oldest entries
-        sorted_items = sorted(
-            self.cache.items(),
-            key=lambda x: x[1][1],  # Sort by timestamp
-        )
-
-        evict_count = len(self.cache) // 5  # Remove 20%
-        for key, _ in sorted_items[:evict_count]:
-            del self.cache[key]
-
-    def clear(self) -> None:
+    async def clear(self) -> None:
         """Clear all cache entries."""
-        self.cache.clear()
+        self._fallback_cache.clear()
+        if self._redis_client and not self._use_fallback:
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = await self._redis_client.scan(
+                        cursor=cursor, match=f"{self._key_prefix}*", count=100
+                    )
+                    if keys:
+                        await self._redis_client.delete(*keys)
+                    if cursor == 0:
+                        break
+            except Exception as e:
+                self._logger.warning("Redis CLEAR failed for search cache: %s", e)
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
         return {
-            "size": len(self.cache),
+            "backend": "redis" if not self._use_fallback else "in-memory",
+            "fallback_size": len(self._fallback_cache),
             "max_size": self.max_size,
             "ttl_seconds": self.ttl_seconds,
         }
@@ -155,7 +208,7 @@ class SearchService(LoggerMixin):
                     SearchType.SEMANTIC,
                     request.dict(exclude={"query"}),
                 )
-                cached_response = self.cache.get(cache_key)
+                cached_response = await self.cache.get(cache_key)
                 if cached_response:
                     self.search_stats["cache_hits"] += 1
                     self.logger.info(
@@ -187,7 +240,7 @@ class SearchService(LoggerMixin):
 
             # Cache response
             if self.cache and cache_key:
-                self.cache.set(cache_key, response)
+                await self.cache.set(cache_key, response)
 
             # Update stats
             self._update_search_stats(time.time() - start_time)
@@ -238,7 +291,7 @@ class SearchService(LoggerMixin):
                     SearchType.HYBRID,
                     request.dict(exclude={"query"}),
                 )
-                cached_response = self.cache.get(cache_key)
+                cached_response = await self.cache.get(cache_key)
                 if cached_response:
                     self.search_stats["cache_hits"] += 1
                     self.logger.info(
@@ -318,7 +371,7 @@ class SearchService(LoggerMixin):
 
             # Cache response
             if self.cache and cache_key:
-                self.cache.set(cache_key, response)
+                await self.cache.set(cache_key, response)
 
             # Update stats
             self._update_search_stats(time.time() - start_time)
@@ -557,7 +610,7 @@ class SearchService(LoggerMixin):
         ) / total_searches
         self.search_stats["average_response_time"] = new_avg
 
-    def get_search_stats(self) -> Dict[str, any]:
+    def get_search_stats(self) -> Dict[str, Any]:
         """
         Get search service statistics.
 
@@ -581,13 +634,13 @@ class SearchService(LoggerMixin):
 
         return stats
 
-    def clear_cache(self) -> None:
+    async def clear_cache(self) -> None:
         """Clear search cache."""
         if self.cache:
-            self.cache.clear()
+            await self.cache.clear()
             self.logger.info("Search cache cleared")
 
-    async def get_document_for_api(self, document_id: str) -> Optional[Dict[str, any]]:
+    async def get_document_for_api(self, document_id: str) -> Optional[Dict[str, Any]]:
         """
         Get document metadata for API endpoints.
 
@@ -614,7 +667,7 @@ class SearchService(LoggerMixin):
 
     async def _process_document_internal(
         self, document_id: str
-    ) -> Optional[Dict[str, any]]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Internal method for document processing that needs access to file_path.
 
@@ -669,5 +722,5 @@ async def close_search_service():
     global _search_service
     if _search_service:
         if _search_service.cache:
-            _search_service.cache.clear()
+            await _search_service.cache.clear()
         _search_service = None

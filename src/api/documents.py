@@ -13,12 +13,13 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
 
-from src.auth.models import User
-from src.auth.security import get_current_user
+from src.auth.models import Permission, TokenData, User
+from src.auth.security import get_current_user, require_permission
 from src.core.config import get_settings
 from src.core.logging import get_logger
 from src.documents.models import (
@@ -38,6 +39,20 @@ settings = get_settings()
 logger = get_logger(__name__)
 router = APIRouter()
 
+# Import shared rate limiter for route-level limits
+from src.core.rate_limit import RATE_LIMIT_AUTHENTICATED, SLOWAPI_AVAILABLE, limiter
+
+
+def _apply_rate_limit(rate: str):
+    """Return the limiter decorator if available, otherwise a no-op."""
+    if SLOWAPI_AVAILABLE and limiter is not None:
+        return limiter.limit(rate)
+
+    def _noop(func):
+        return func
+
+    return _noop
+
 
 @router.post(
     "/upload",
@@ -45,9 +60,11 @@ router = APIRouter()
     status_code=status.HTTP_201_CREATED,
     summary="Upload document for processing",
 )
+@_apply_rate_limit(RATE_LIMIT_AUTHENTICATED)
 async def upload_document(
+    http_request: Request,
     file: UploadFile = File(..., description="Document to upload"),
-    current_user: User = Depends(get_current_user),
+    current_user: TokenData = Depends(require_permission(Permission.UPLOAD)),
 ) -> DocumentResponse:
     """
     Upload one or more documents for processing.
@@ -277,7 +294,7 @@ async def get_document(
     summary="Delete document and all associated data",
 )
 async def delete_document(
-    document_id: UUID, current_user: User = Depends(get_current_user)
+    document_id: UUID, current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS))
 ) -> None:
     """
     Delete a document and all its associated chunks and embeddings.
@@ -418,10 +435,10 @@ async def get_processing_status(
     document_service = await get_document_service()
 
     try:
-        status = await document_service.get_processing_status(document_id)
+        doc_status = await document_service.get_processing_status(document_id)
         error = await document_service.get_processing_error(document_id)
 
-        if status is None:
+        if doc_status is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Document {document_id} not found",
@@ -432,10 +449,10 @@ async def get_processing_status(
             ProcessingStatus.PROCESSING: "Document is currently being processed",
             ProcessingStatus.COMPLETED: "Document processing completed successfully",
             ProcessingStatus.FAILED: f"Document processing failed: {error or 'Unknown error'}",
-        }.get(status, "Unknown status")
+        }.get(doc_status, "Unknown status")
 
         return DocumentProcessingResponse(
-            document_id=document_id, status=status, message=message
+            document_id=document_id, status=doc_status, message=message
         )
 
     except HTTPException:
@@ -461,7 +478,7 @@ async def get_processing_status(
 async def reprocess_document(
     document_id: UUID,
     request: DocumentProcessingRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS)),
 ) -> DocumentProcessingResponse:
     """
     Reprocess a document (force re-extraction and re-chunking).
@@ -481,7 +498,7 @@ async def reprocess_document(
     "/bulk", response_model=BulkDeleteResponse, summary="Bulk delete documents"
 )
 async def bulk_delete_documents(
-    request: BulkDeleteRequest, current_user: User = Depends(get_current_user)
+    request: BulkDeleteRequest, current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS))
 ) -> BulkDeleteResponse:
     """
     Delete multiple documents at once.

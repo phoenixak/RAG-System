@@ -165,6 +165,7 @@ async def check_services_health() -> Dict[str, str]:
     # Check ChromaDB connection
     try:
         from src.vector_store.chroma_client import get_chroma_client
+
         chroma_client = get_chroma_client()
         await chroma_client.health_check()
         services_status["vector_store"] = "healthy"
@@ -175,6 +176,7 @@ async def check_services_health() -> Dict[str, str]:
     # Check embedding service
     try:
         from src.documents.embeddings import get_embedding_generator
+
         embedding_generator = get_embedding_generator()
         model_info = embedding_generator.get_model_info()
         services_status["embedding_service"] = "healthy"
@@ -185,9 +187,10 @@ async def check_services_health() -> Dict[str, str]:
     # Check LLM service
     try:
         from src.llm.service import get_llm_service
+
         llm_service = get_llm_service()
         connection_test = await llm_service.test_connection()
-        
+
         if connection_test["success"]:
             services_status["llm_service"] = "healthy"
         elif connection_test.get("demo_mode"):
@@ -200,8 +203,17 @@ async def check_services_health() -> Dict[str, str]:
 
     # Check Redis connection (optional)
     try:
-        # Redis is not critical for basic functionality in this implementation
-        services_status["redis"] = "not_implemented"
+        import redis.asyncio as redis_async
+        from src.core.config import get_settings as _get_settings
+
+        _settings = _get_settings()
+        redis_client = redis_async.from_url(_settings.redis_url, decode_responses=True)
+        pong = await redis_client.ping()
+        await redis_client.aclose()
+        if pong:
+            services_status["redis"] = "healthy"
+        else:
+            services_status["redis"] = "unhealthy"
     except Exception as e:
         logger.error("Redis health check failed", error=str(e))
         services_status["redis"] = "unhealthy"

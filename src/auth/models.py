@@ -3,12 +3,12 @@ Authentication Models
 User models, token models, and authentication-related data structures.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, validator
 
 
 class UserRole(str, Enum):
@@ -100,14 +100,13 @@ class UserInDB(UserBase):
 
     id: UUID = Field(default_factory=uuid4)
     password_hash: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
     failed_login_attempts: int = 0
     is_locked: bool = False
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class User(UserBase):
@@ -133,8 +132,7 @@ class User(UserBase):
             last_login=db_user.last_login,
         )
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoginRequest(BaseModel):

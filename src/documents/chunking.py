@@ -3,6 +3,7 @@ Text Chunking System
 Implements recursive character text splitter with tiktoken for accurate token counting.
 """
 
+import asyncio
 import re
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -373,3 +374,26 @@ def get_text_chunker(
             return RecursiveCharacterTextSplitter(**kwargs)
     else:
         raise ValueError(f"Unknown chunking strategy: {strategy}")
+
+
+async def async_chunk_text(
+    chunker: TextChunker,
+    text: str,
+    document_id: UUID,
+    metadata: Dict[str, Any],
+) -> List[DocumentChunk]:
+    """Async wrapper around TextChunker.chunk_text.
+
+    Runs the synchronous chunking operation in a thread pool to avoid
+    blocking the event loop on large documents.
+
+    Args:
+        chunker: TextChunker instance to use
+        text: Text to chunk
+        document_id: Document UUID
+        metadata: Document metadata
+
+    Returns:
+        List of DocumentChunk objects
+    """
+    return await asyncio.to_thread(chunker.chunk_text, text, document_id, metadata)

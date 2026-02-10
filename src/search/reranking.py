@@ -6,7 +6,7 @@ Cross-encoder based re-ranking to improve search result relevance.
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from sentence_transformers import CrossEncoder
@@ -49,7 +49,7 @@ class RerankingEngine(LoggerMixin):
             )
 
             # Load model in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self.model = await loop.run_in_executor(
                 self.executor, lambda: CrossEncoder(self.model_name, device=self.device)
             )
@@ -180,7 +180,7 @@ class RerankingEngine(LoggerMixin):
             )
 
             # Predict scores in thread pool
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             batch_scores = await loop.run_in_executor(
                 self.executor, self._predict_batch_sync, batch
             )
@@ -246,7 +246,7 @@ class RerankingEngine(LoggerMixin):
         updated_results = []
         for result, rerank_score in zip(results, rerank_scores):
             # Create a copy of the result to avoid modifying the original
-            updated_result = result.copy(deep=True)
+            updated_result = result.model_copy(deep=True)
             updated_result.rerank_score = rerank_score
 
             # Update the main score to be the re-ranking score
@@ -264,7 +264,7 @@ class RerankingEngine(LoggerMixin):
 
         return updated_results
 
-    def get_model_info(self) -> Dict[str, any]:
+    def get_model_info(self) -> Dict[str, Any]:
         """
         Get information about the re-ranking model.
 

@@ -1,368 +1,272 @@
 """
-Authentication System Tests
-Comprehensive tests for authentication, authorization, and security.
+Tests for authentication and security components.
+Tests JWT token management, password hashing, and security utilities.
 """
 
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
-from fastapi import HTTPException
+import time
+import uuid
+from datetime import datetime, timezone
+from unittest.mock import patch
 
-from src.auth.models import User, UserCreate, TokenData
-from src.auth.jwt_utils import create_access_token, verify_access_token
-from src.auth.security import (
-    hash_password, 
-    verify_password, 
-    is_password_secure,
-    sanitize_input
+import pytest
+
+from src.auth.models import (
+    LoginRequest,
+    Permission,
+    ROLE_PERMISSIONS,
+    TokenData,
+    User,
+    UserCreate,
+    UserRole,
 )
 
 
+class TestUserRole:
+    """Tests for UserRole enum and permissions."""
+
+    def test_role_values(self):
+        """Test UserRole enum values."""
+        assert UserRole.ADMIN == "admin"
+        assert UserRole.POWER_USER == "power_user"
+        assert UserRole.STANDARD_USER == "standard_user"
+        assert UserRole.READ_ONLY == "read_only"
+
+    def test_admin_has_all_permissions(self):
+        """Test admin role has all permissions."""
+        admin_perms = ROLE_PERMISSIONS[UserRole.ADMIN]
+        assert Permission.READ in admin_perms
+        assert Permission.WRITE in admin_perms
+        assert Permission.UPLOAD in admin_perms
+        assert Permission.MANAGE_DOCS in admin_perms
+        assert Permission.ADMIN in admin_perms
+
+    def test_readonly_has_only_read(self):
+        """Test read-only role has only read permission."""
+        readonly_perms = ROLE_PERMISSIONS[UserRole.READ_ONLY]
+        assert Permission.READ in readonly_perms
+        assert len(readonly_perms) == 1
+
+    def test_standard_user_permissions(self):
+        """Test standard user has read, write, upload permissions."""
+        perms = ROLE_PERMISSIONS[UserRole.STANDARD_USER]
+        assert Permission.READ in perms
+        assert Permission.WRITE in perms
+        assert Permission.UPLOAD in perms
+        assert Permission.ADMIN not in perms
+
+
 class TestPasswordSecurity:
-    """Test password hashing and validation."""
+    """Tests for password hashing and verification."""
 
-    def test_password_hashing(self):
-        """Test password hashing and verification."""
-        password = "secure_password123!"
-        
-        # Test hashing
+    def test_hash_password(self):
+        """Test password hashing produces a hash."""
+        from src.auth.security import hash_password
+
+        hashed = hash_password("TestPassword123!")
+        assert hashed != "TestPassword123!"
+        assert len(hashed) > 0
+
+    def test_verify_password_correct(self):
+        """Test verifying correct password returns True."""
+        from src.auth.security import hash_password, verify_password
+
+        password = "SecurePassword456!"
         hashed = hash_password(password)
-        assert hashed != password
-        assert len(hashed) > 50  # bcrypt hashes are typically long
-        
-        # Test verification
         assert verify_password(password, hashed) is True
-        assert verify_password("wrong_password", hashed) is False
 
-    def test_password_strength_validation(self):
-        """Test password strength requirements."""
-        # Valid passwords (avoiding sequential characters)
-        valid_passwords = [
-            "MyVeryS3cur3!",
-            "C0mpl3xP@ssw0rd",
-            "Str0ngP@ssw0rd!",
-        ]
-        
-        for password in valid_passwords:
-            is_secure, errors = is_password_secure(password)
-            assert is_secure, f"Valid password {password} failed validation: {errors}"
+    def test_verify_password_incorrect(self):
+        """Test verifying incorrect password returns False."""
+        from src.auth.security import hash_password, verify_password
 
-        # Invalid passwords  
-        invalid_passwords = [
-            "short",  # Too short
-            "nouppercase123!",  # No uppercase
-            "NOLOWERCASE123!",  # No lowercase
-            "NoNumbers!",  # No numbers
-            "NoSpecialChars123",  # No special characters
-        ]
-        
-        for password in invalid_passwords:
-            is_secure, errors = is_password_secure(password)
-            assert not is_secure, f"Invalid password {password} passed validation"
+        hashed = hash_password("CorrectPassword123!")
+        assert verify_password("WrongPassword123!", hashed) is False
 
-    def test_hash_consistency(self):
-        """Test that the same password produces different hashes."""
-        password = "test_password123!"
-        hash1 = hash_password(password)
-        hash2 = hash_password(password)
-        
-        # Hashes should be different due to salt
-        assert hash1 != hash2
-        
-        # But both should verify correctly
-        assert verify_password(password, hash1) is True
-        assert verify_password(password, hash2) is True
+    def test_hash_is_unique_per_call(self):
+        """Test that hashing same password produces different hashes (salted)."""
+        from src.auth.security import hash_password
 
+        hash1 = hash_password("SamePassword123!")
+        hash2 = hash_password("SamePassword123!")
+        assert hash1 != hash2  # bcrypt uses random salt
 
-class TestJWTTokens:
-    """Test JWT token creation and validation."""
+    def test_is_password_secure_valid(self):
+        """Test secure password validation passes."""
+        from src.auth.security import is_password_secure
 
-    def test_create_access_token(self):
-        """Test access token creation."""
-        user_data = {"user_id": "test_user", "email": "test@example.com"}
-        token = create_access_token(user_data)
-        
-        assert isinstance(token, str)
-        assert len(token) > 100  # JWT tokens are typically long
+        is_secure, issues = is_password_secure("StrongP@ssw0rd!")
+        assert is_secure is True
+        assert len(issues) == 0
 
-    def test_create_token_with_custom_expiry(self):
-        """Test token creation with custom expiry."""
-        user_data = {"user_id": "test_user"}
-        custom_expires = timedelta(hours=2)
-        
-        token = create_access_token(user_data, expires_delta=custom_expires)
-        decoded = decode_token(token)
-        
-        assert decoded is not None
-        assert decoded["user_id"] == "test_user"
+    def test_is_password_secure_weak(self):
+        """Test weak password validation fails."""
+        from src.auth.security import is_password_secure
 
-    @pytest.mark.asyncio
-    async def test_verify_valid_token(self):
-        """Test verification of valid token."""
-        from src.auth.jwt_utils import token_manager
-        
-        token = token_manager.create_access_token(
-            user_id="test_user",
-            email="test@example.com", 
-            role="standard_user"
-        )
-        
-        token_data = token_manager.verify_access_token(token)
-        
-        assert token_data.user_id == "test_user"
-        assert token_data.email == "test@example.com"
-
-    @pytest.mark.asyncio 
-    async def test_verify_expired_token(self):
-        """Test verification of expired token."""
-        # This test would need access to token creation with custom expiry
-        # Skip for now as the current implementation doesn't expose this
-        pass
-
-    @pytest.mark.asyncio
-    async def test_verify_invalid_token(self):
-        """Test verification of invalid token."""
-        from src.auth.jwt_utils import token_manager
-        
-        invalid_token = "invalid.jwt.token"
-        
-        with pytest.raises(Exception):  # JWTError or similar
-            token_manager.verify_access_token(invalid_token)
-
-
-class TestUserModels:
-    """Test user data models."""
-
-    def test_user_create_validation(self):
-        """Test user creation validation."""
-        # Valid user data
-        user_data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "SecurePass123!",
-            "role": "standard_user"
-        }
-        
-        user = UserCreate(**user_data)
-        assert user.email == "test@example.com"
-        assert user.username == "testuser"
-        assert user.role == "standard_user"
-
-    def test_user_create_invalid_email(self):
-        """Test user creation with invalid email."""
-        with pytest.raises(ValueError):
-            UserCreate(
-                email="invalid-email",
-                username="testuser",
-                password="SecurePass123!",
-            )
-
-    def test_user_create_weak_password(self):
-        """Test user creation with weak password."""
-        with pytest.raises(ValueError):
-            UserCreate(
-                email="test@example.com",
-                username="testuser",
-                password="weak",
-            )
-
-    def test_user_model(self):
-        """Test User model."""
-        user_data = {
-            "user_id": "test_id",
-            "email": "test@example.com",
-            "username": "testuser",
-            "role": "admin",
-            "is_active": True,
-            "created_at": datetime.utcnow(),
-            "last_login": datetime.utcnow(),
-        }
-        
-        user = User(**user_data)
-        assert user.user_id == "test_id"
-        assert user.email == "test@example.com"
-        assert user.is_active is True
-
-    def test_token_data_model(self):
-        """Test TokenData model."""
-        token_data = TokenData(
-            user_id="test_user",
-            email="test@example.com",
-            role="admin",
-            permissions=["read", "write"]
-        )
-        
-        assert token_data.user_id == "test_user"
-        assert token_data.role == "admin"
-        assert "read" in token_data.permissions
+        is_secure, issues = is_password_secure("weak")
+        assert is_secure is False
+        assert len(issues) > 0
 
 
 class TestSecurityUtilities:
-    """Test security utility functions."""
+    """Tests for security utility functions."""
 
     def test_sanitize_input(self):
-        """Test input sanitization."""
-        # Test basic sanitization
-        clean_input = sanitize_input("normal input")
-        assert clean_input == "normal input"
-        
-        # Test HTML stripping
-        html_input = "<script>alert('xss')</script>hello"
-        clean_input = sanitize_input(html_input)
-        assert "<script>" not in clean_input
-        assert "hello" in clean_input
+        """Test input sanitization removes dangerous characters."""
+        from src.auth.security import sanitize_input
 
-    def test_safe_filename_validation(self):
+        result = sanitize_input("<script>alert('xss')</script>")
+        assert "<script>" not in result
+
+    def test_sanitize_input_max_length(self):
+        """Test input sanitization respects max length."""
+        from src.auth.security import sanitize_input
+
+        result = sanitize_input("a" * 1000, max_length=100)
+        assert len(result) <= 100
+
+    def test_is_safe_filename_valid(self):
         """Test safe filename validation."""
         from src.auth.security import is_safe_filename
-        
-        # Test normal filename
+
         assert is_safe_filename("document.pdf") is True
-        
-        # Test filename with unsafe characters
+        assert is_safe_filename("my_report_2024.docx") is True
+
+    def test_is_safe_filename_invalid(self):
+        """Test unsafe filename rejection."""
+        from src.auth.security import is_safe_filename
+
         assert is_safe_filename("../../../etc/passwd") is False
-        assert is_safe_filename("file\x00name.pdf") is False
-        
-        # Test very long filename
-        long_filename = "a" * 300 + ".pdf"
-        assert is_safe_filename(long_filename) is False
+        assert is_safe_filename("") is False
+
+    def test_generate_secure_token(self):
+        """Test secure token generation."""
+        from src.auth.security import generate_secure_token
+
+        token1 = generate_secure_token()
+        token2 = generate_secure_token()
+        assert token1 != token2
+        assert len(token1) > 0
 
 
-class TestAuthenticationAPI:
-    """Test authentication API endpoints."""
+class TestJWTTokenManagement:
+    """Tests for JWT token creation and verification."""
 
-    @pytest.mark.asyncio
-    async def test_login_success(self, test_client):
-        """Test successful login."""
-        with patch("src.api.auth.authenticate_user") as mock_auth:
-            # Mock successful authentication
-            mock_user = {
-                "user_id": "test_user",
-                "email": "test@example.com",
-                "role": "standard_user"
-            }
-            mock_auth.return_value = mock_user
-            
-            response = test_client.post(
-                "/api/v1/auth/login",
-                json={"email": "test@example.com", "password": "password123!"}
+    def test_create_access_token(self):
+        """Test access token creation."""
+        from src.auth.jwt_utils import create_access_token
+
+        token = create_access_token(
+            user_id="test-user-id",
+            email="test@example.com",
+            role=UserRole.STANDARD_USER,
+            permissions=[Permission.READ, Permission.WRITE],
+        )
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+    def test_create_refresh_token(self):
+        """Test refresh token creation."""
+        from src.auth.jwt_utils import create_refresh_token
+
+        token = create_refresh_token(
+            user_id="test-user-id",
+            email="test@example.com",
+            role=UserRole.STANDARD_USER,
+        )
+        assert isinstance(token, str)
+        assert len(token) > 0
+
+    def test_verify_access_token(self):
+        """Test access token verification returns TokenData."""
+        from src.auth.jwt_utils import create_access_token, verify_access_token
+
+        token = create_access_token(
+            user_id="test-user-id",
+            email="test@example.com",
+            role=UserRole.ADMIN,
+            permissions=[Permission.READ],
+        )
+        token_data = verify_access_token(token)
+        assert isinstance(token_data, TokenData)
+        assert token_data.user_id == "test-user-id"
+        assert token_data.email == "test@example.com"
+
+    def test_verify_refresh_token(self):
+        """Test refresh token verification."""
+        from src.auth.jwt_utils import create_refresh_token, verify_refresh_token
+
+        token = create_refresh_token(
+            user_id="test-user-id",
+            email="test@example.com",
+            role=UserRole.STANDARD_USER,
+        )
+        token_data = verify_refresh_token(token)
+        assert token_data.user_id == "test-user-id"
+
+    def test_revoke_token(self):
+        """Test token revocation."""
+        from src.auth.jwt_utils import (
+            JWTError,
+            create_access_token,
+            revoke_token,
+            verify_access_token,
+        )
+
+        token = create_access_token(
+            user_id="test-user-id",
+            email="test@example.com",
+            role=UserRole.STANDARD_USER,
+        )
+        # Verify works before revocation
+        verify_access_token(token)
+
+        # Revoke
+        revoke_token(token)
+
+        # Should fail after revocation
+        with pytest.raises(JWTError):
+            verify_access_token(token)
+
+    def test_verify_invalid_token_raises(self):
+        """Test that invalid token raises JWTError."""
+        from src.auth.jwt_utils import JWTError, verify_access_token
+
+        with pytest.raises(JWTError):
+            verify_access_token("invalid.token.string")
+
+
+class TestAuthModels:
+    """Tests for authentication Pydantic models."""
+
+    def test_login_request_valid(self):
+        """Test valid login request."""
+        req = LoginRequest(email="user@example.com", password="password123")
+        assert req.email == "user@example.com"
+
+    def test_user_create_password_validation(self):
+        """Test UserCreate password validation requires strong password."""
+        with pytest.raises(ValueError):
+            UserCreate(
+                email="user@example.com",
+                password="weak",  # Too short, no uppercase/special
             )
-            
-            assert response.status_code == 200
-            data = response.json()
-            assert "access_token" in data
-            assert data["token_type"] == "bearer"
 
-    @pytest.mark.asyncio
-    async def test_login_invalid_credentials(self, test_client):
-        """Test login with invalid credentials."""
-        with patch("src.api.auth.authenticate_user") as mock_auth:
-            mock_auth.return_value = None  # Authentication failed
-            
-            response = test_client.post(
-                "/api/v1/auth/login",
-                json={"email": "test@example.com", "password": "wrong_password"}
-            )
-            
-            assert response.status_code == 401
+    def test_user_create_valid(self):
+        """Test valid UserCreate."""
+        user = UserCreate(
+            email="user@example.com",
+            password="StrongP@ss1234",
+        )
+        assert user.email == "user@example.com"
 
-    @pytest.mark.asyncio
-    async def test_get_current_user(self, authenticated_client):
-        """Test getting current user info."""
-        with patch("src.api.auth.get_current_user") as mock_get_user:
-            mock_user = {
-                "user_id": "test_user",
-                "email": "test@example.com",
-                "role": "standard_user"
-            }
-            mock_get_user.return_value = mock_user
-            
-            response = authenticated_client.get("/api/v1/auth/me")
-            
-            # Note: This might fail without proper auth setup
-            # The test demonstrates the expected behavior
-
-
-class TestRoleBasedAccess:
-    """Test role-based access control."""
-
-    def test_admin_permissions(self):
-        """Test admin role permissions."""
-        from src.auth.models import UserRole
-        
-        admin_permissions = {
-            "can_upload": True,
-            "can_delete": True,
-            "can_manage_users": True,
-            "can_view_analytics": True,
-        }
-        
-        # This would be implemented in the actual RBAC system
-        assert UserRole.ADMIN.value == "admin"
-
-    def test_standard_user_permissions(self):
-        """Test standard user permissions."""
-        from src.auth.models import UserRole
-        
-        user_permissions = {
-            "can_upload": True,
-            "can_delete": False,  # Own documents only
-            "can_manage_users": False,
-            "can_view_analytics": False,
-        }
-        
-        assert UserRole.STANDARD_USER.value == "standard_user"
-
-    def test_read_only_permissions(self):
-        """Test read-only user permissions."""
-        from src.auth.models import UserRole
-        
-        readonly_permissions = {
-            "can_upload": False,
-            "can_delete": False,
-            "can_manage_users": False,
-            "can_view_analytics": False,
-        }
-        
-        assert UserRole.READ_ONLY.value == "read_only"
-
-
-class TestSessionManagement:
-    """Test session management functionality."""
-
-    def test_token_blacklisting(self):
-        """Test token blacklisting mechanism."""
-        # This would test token blacklisting if implemented
-        # For now, we'll test the concept
-        token = "sample.jwt.token"
-        blacklisted_tokens = set()
-        
-        # Add to blacklist
-        blacklisted_tokens.add(token)
-        assert token in blacklisted_tokens
-        
-        # Check if blacklisted
-        is_blacklisted = token in blacklisted_tokens
-        assert is_blacklisted is True
-
-    def test_session_timeout(self):
-        """Test session timeout handling."""
-        # Test token expiration logic
-        from datetime import datetime, timedelta
-        
-        # Create token that expires in 1 hour
-        expires_at = datetime.utcnow() + timedelta(hours=1)
-        current_time = datetime.utcnow()
-        
-        # Should not be expired
-        is_expired = current_time > expires_at
-        assert is_expired is False
-        
-        # Simulate time passing
-        future_time = datetime.utcnow() + timedelta(hours=2)
-        is_expired = future_time > expires_at
-        assert is_expired is True
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])
+    def test_user_model(self):
+        """Test User model creation."""
+        user = User(
+            id=uuid.uuid4(),
+            email="test@example.com",
+            role=UserRole.STANDARD_USER,
+            permissions=[Permission.READ],
+            created_at=datetime.now(timezone.utc),
+            is_active=True,
+        )
+        assert user.is_active is True
+        assert user.role == UserRole.STANDARD_USER

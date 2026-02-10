@@ -12,7 +12,7 @@ from uuid import UUID
 
 from src.core.config import get_settings
 from src.core.logging import get_logger
-from src.documents.chunking import get_text_chunker
+from src.documents.chunking import async_chunk_text, get_text_chunker
 from src.documents.deduplication import get_deduplication_service
 from src.documents.embeddings import get_embedding_generator
 from src.documents.models import (
@@ -311,8 +311,9 @@ class DocumentService:
             doc_metadata.subject = metadata.get("subject")
             doc_metadata.page_count = metadata.get("page_count")
 
-            # Chunk text
-            chunks = self.text_chunker.chunk_text(
+            # Chunk text (async to avoid blocking on large documents)
+            chunks = await async_chunk_text(
+                chunker=self.text_chunker,
                 text=extracted_text,
                 document_id=document_id,
                 metadata={
