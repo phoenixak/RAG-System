@@ -136,7 +136,7 @@ class RAGSystem:
 
         with st.spinner("Loading language model (flan-t5-small)..."):
             llm = hf_pipeline(
-                "text2text-generation",
+                "text-generation",
                 model="google/flan-t5-small",
                 max_new_tokens=200,
                 do_sample=False,
@@ -415,7 +415,7 @@ class RAGSystem:
         Args:
             query: User question.
             context_docs: Retrieved documents from search().
-            llm_pipeline: HuggingFace text2text-generation pipeline.
+            llm_pipeline: HuggingFace text-generation pipeline.
 
         Returns:
             Generated answer string.
@@ -465,16 +465,13 @@ class RAGSystem:
         if not context_docs:
             return "No relevant information found in the uploaded documents."
 
-        response_parts = [
-            "Here are the most relevant excerpts from your documents:\n"
-        ]
+        response_parts = ["Here are the most relevant excerpts from your documents:\n"]
         for i, doc in enumerate(context_docs[:3], 1):
             excerpt = doc["text"][:300].strip()
             source = doc["source"]
             score = doc["similarity"]
             response_parts.append(
-                f"**Source {i}** ({source}, relevance: {score:.0%}):\n"
-                f"> {excerpt}...\n"
+                f"**Source {i}** ({source}, relevance: {score:.0%}):\n> {excerpt}...\n"
             )
 
         return "\n".join(response_parts)
@@ -550,8 +547,8 @@ def render_sidebar() -> None:
             for doc in st.session_state.documents:
                 st.markdown(
                     f'<div class="doc-item">'
-                    f'<strong>{doc["filename"]}</strong><br>'
-                    f'<small>{doc["chunks"]} chunks | {doc["type"].upper()}</small>'
+                    f"<strong>{doc['filename']}</strong><br>"
+                    f"<small>{doc['chunks']} chunks | {doc['type'].upper()}</small>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -614,9 +611,7 @@ def process_uploaded_files(uploaded_files) -> None:
                         "text_length": len(doc_data["text"]),
                     }
                 )
-                st.sidebar.success(
-                    f"Added {uploaded_file.name} ({chunk_count} chunks)"
-                )
+                st.sidebar.success(f"Added {uploaded_file.name} ({chunk_count} chunks)")
 
         except Exception as exc:
             st.sidebar.error(f"Error processing {uploaded_file.name}: {exc}")
@@ -706,17 +701,11 @@ def render_retrieved_docs(docs: list[dict]) -> None:
 
 
 def render_chat_area() -> None:
-    """Render the main chat interface."""
+    """Render the chat message history."""
     # Display chat history
     for message in st.session_state.chat_history:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-
-    # Chat input
-    user_query = st.chat_input("Ask a question about your documents...")
-
-    if user_query:
-        handle_user_query(user_query)
 
 
 def handle_user_query(query: str) -> None:
@@ -792,6 +781,11 @@ def main() -> None:
 
     # Sidebar
     render_sidebar()
+
+    # Chat input must be at the top level (not inside columns/tabs/expanders)
+    user_query = st.chat_input("Ask a question about your documents...")
+    if user_query:
+        handle_user_query(user_query)
 
     # Main content: two columns (chat | retrieved docs)
     col_chat, col_docs = st.columns([2, 1])

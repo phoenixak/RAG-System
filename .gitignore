@@ -44,6 +44,10 @@ htmlcov/
 
 # ChromaDB data
 chroma_data/
+chroma_db/
+
+# Launcher temp files
+.temp_streamlit_app.py
 
 # OS
 .DS_Store

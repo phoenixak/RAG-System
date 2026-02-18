@@ -21,19 +21,74 @@ Environment:
 """
 
 import argparse
+import builtins
 import os
+import re
+import secrets
 import signal
+import shutil
+import string
 import subprocess
 import sys
 import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 # Add project root to Python path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
+
+
+def _find_venv_python() -> str:
+    """Return the path to the virtualenv Python interpreter.
+
+    Checks, in order:
+    1. The currently-running interpreter (if it lives inside a venv).
+    2. The .venv directory next to this script.
+
+    Falls back to ``sys.executable`` so that the launcher still works
+    when the user has activated the venv before running ``run.py``.
+    """
+    # If we are already running from the venv, just use ourselves.
+    venv_dir = project_root / ".venv"
+    current = Path(sys.executable).resolve()
+    if venv_dir.exists() and str(current).startswith(str(venv_dir.resolve())):
+        return sys.executable
+
+    # Otherwise, look for the venv Python explicitly.
+    if sys.platform == "win32":
+        candidate = venv_dir / "Scripts" / "python.exe"
+    else:
+        candidate = venv_dir / "bin" / "python"
+
+    if candidate.exists():
+        return str(candidate)
+
+    # Last resort — use whatever ``sys.executable`` is.
+    return sys.executable
+
+
+def safe_print(*args, **kwargs):
+    """Print safely on terminals that cannot encode emoji/unicode."""
+    try:
+        builtins.print(*args, **kwargs)
+    except UnicodeEncodeError:
+        sep = kwargs.get("sep", " ")
+        end = kwargs.get("end", "\n")
+        file = kwargs.get("file", sys.stdout)
+        flush = kwargs.get("flush", False)
+
+        fallback_text = sep.join(str(arg) for arg in args)
+        fallback_text = fallback_text.encode("ascii", "ignore").decode("ascii")
+        builtins.print(fallback_text, end=end, file=file, flush=flush)
+
+
+# Route all module-level prints through the safe printer.
+print = safe_print
 
 # ============================================================================
 # BACKEND CODE (FastAPI)
@@ -514,6 +569,123 @@ class ServiceManager:
     def __init__(self):
         self.processes: List[subprocess.Popen] = []
         self.shutdown_event = threading.Event()
+        self.env_file = project_root / ".env"
+        self.env_example_file = project_root / ".env.example"
+
+    def _generate_secret(self, length: int = 48) -> str:
+        """Generate a development-safe random secret."""
+        alphabet = string.ascii_letters + string.digits + "-_"
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
+    def _parse_env_file(self, env_path: Path) -> Dict[str, str]:
+        """Parse a simple .env file into key-value pairs."""
+        values: Dict[str, str] = {}
+        if not env_path.exists():
+            return values
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if key.startswith("export "):
+                key = key.replace("export ", "", 1).strip()
+            if (value.startswith('"') and value.endswith('"')) or (
+                value.startswith("'") and value.endswith("'")
+            ):
+                value = value[1:-1]
+            values[key] = value
+
+        return values
+
+    def _upsert_env_value(self, env_text: str, key: str, value: str) -> str:
+        """Update a key in env file content, or append it if missing."""
+        pattern = re.compile(rf"(?m)^\s*{re.escape(key)}\s*=.*$")
+        replacement = f"{key}={value}"
+
+        if pattern.search(env_text):
+            return pattern.sub(replacement, env_text, count=1)
+
+        if not env_text.endswith("\n"):
+            env_text += "\n"
+        return f"{env_text}{replacement}\n"
+
+    def _bootstrap_env_file(self) -> bool:
+        """Create .env from .env.example and inject safe development secrets."""
+        if self.env_file.exists():
+            return True
+
+        if not self.env_example_file.exists():
+            print("X Missing .env.example. Cannot bootstrap environment file.")
+            return False
+
+        try:
+            shutil.copy2(self.env_example_file, self.env_file)
+            env_text = self.env_file.read_text(encoding="utf-8")
+
+            generated = {
+                "SECRET_KEY": self._generate_secret(),
+                "JWT_SECRET_KEY": self._generate_secret(),
+                "SESSION_SECRET": self._generate_secret(),
+            }
+
+            for key, value in generated.items():
+                env_text = self._upsert_env_value(env_text, key, value)
+
+            self.env_file.write_text(env_text, encoding="utf-8")
+            print("! .env not found. Created .env from .env.example with dev secrets.")
+            return True
+        except Exception as e:
+            print(f"X Failed to bootstrap .env file: {e}")
+            return False
+
+    def _validate_required_env_values(self) -> bool:
+        """Validate required env values for startup."""
+        env_values = self._parse_env_file(self.env_file)
+        required_keys = ["SECRET_KEY"]
+
+        for key in required_keys:
+            value = os.getenv(key) or env_values.get(key, "")
+            if not value:
+                print(f"X Missing required environment value: {key}")
+                return False
+            if len(value) < 32:
+                print(f"X {key} must be at least 32 characters long.")
+                return False
+
+        return True
+
+    def _validate_python_runtime(self) -> bool:
+        """Validate local Python runtime compatibility."""
+        if sys.version_info >= (3, 12):
+            print(
+                "X Python 3.12+ detected. Use Python 3.11 for local startup, or install "
+                "Microsoft C++ Build Tools to compile chroma-hnswlib."
+            )
+            return False
+        return True
+
+    def _process_exit_hint(
+        self, process: Optional[subprocess.Popen], name: str
+    ) -> bool:
+        """Emit clear diagnostics if a service process exits unexpectedly."""
+        if process is None:
+            return True
+
+        return_code = process.poll()
+        if return_code is None:
+            return False
+
+        print(
+            f"X {name} process exited early with code {return_code}. "
+            f"Review [{name.upper()}] logs above for the root cause."
+        )
+        return True
 
     def start_backend(self) -> subprocess.Popen:
         """Start the FastAPI backend server."""
@@ -529,15 +701,8 @@ class ServiceManager:
 
         # Use multiprocessing to run the backend in a separate process
         try:
-            # Create a wrapper script to run the backend
-            backend_code = """
-import sys
-sys.path.insert(0, "{root}")
-from run import run_backend_server
-run_backend_server()
-""".format(root=str(project_root).replace("\\", "\\\\"))
-
-            cmd = [sys.executable, "-c", backend_code]
+            venv_python = _find_venv_python()
+            cmd = [venv_python, str(project_root / "run.py"), "__run_backend__"]
 
             process = subprocess.Popen(
                 cmd,
@@ -581,28 +746,13 @@ from run import run_streamlit_app
 run_streamlit_app()
 """.format(root=str(project_root).replace("\\", "\\\\"))
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "streamlit",
-            "run",
-            "--server.port=8501",
-            "--server.address=0.0.0.0",
-            "--server.headless=true",
-            "--browser.gatherUsageStats=false",
-            "--theme.primaryColor=#FF6B6B",
-            "--theme.backgroundColor=#FFFFFF",
-            "--theme.secondaryBackgroundColor=#F0F2F6",
-            "-c",
-            frontend_code,
-        ]
-
         # Write the code to a temporary file
         temp_file = project_root / ".temp_streamlit_app.py"
         temp_file.write_text(frontend_code)
 
+        venv_python = _find_venv_python()
         cmd = [
-            sys.executable,
+            venv_python,
             "-m",
             "streamlit",
             "run",
@@ -654,27 +804,29 @@ run_streamlit_app()
 
     def wait_for_service(self, url: str, timeout: int = 30) -> bool:
         """Wait for a service to become available."""
-        import requests
-
         start_time = time.time()
         while time.time() - start_time < timeout:
             try:
-                response = requests.get(url, timeout=2)
-                if response.status_code == 200:
+                req = urllib_request.Request(url, method="GET")
+                with urllib_request.urlopen(req, timeout=2) as response:
+                    status_code = getattr(response, "status", response.getcode())
+                if status_code == 200:
                     return True
-            except Exception:
+            except (urllib_error.URLError, TimeoutError, ValueError):
                 pass
             time.sleep(1)
         return False
 
-    def start_services(self, backend: bool = True, frontend: bool = True):
+    def start_services(
+        self, backend: bool = True, frontend: bool = True, validate: bool = True
+    ):
         """Start the specified services."""
         print("=" * 60)
         print("🏢 Enterprise RAG System Launcher")
         print("=" * 60)
 
         # Validate environment
-        if not self._validate_environment():
+        if validate and not self._validate_environment():
             sys.exit(1)
 
         try:
@@ -684,13 +836,20 @@ run_streamlit_app()
                 if backend_process:
                     self.processes.append(backend_process)
                     print("✅ Backend started successfully")
+                    time.sleep(1)
+                    if self._process_exit_hint(backend_process, "backend"):
+                        return
 
                     # Wait for backend to be ready
                     print("⏳ Waiting for backend to be ready...")
                     if self.wait_for_service("http://localhost:8000/api/v1/health"):
                         print("✅ Backend is ready!")
                     else:
-                        print("⚠️  Backend health check failed, but continuing...")
+                        if self._process_exit_hint(backend_process, "backend"):
+                            return
+                        print(
+                            "⚠️  Backend health check timed out. Backend is still running."
+                        )
                 else:
                     print("❌ Failed to start backend")
                     return
@@ -705,13 +864,20 @@ run_streamlit_app()
                 if frontend_process:
                     self.processes.append(frontend_process)
                     print("✅ Frontend started successfully")
+                    time.sleep(1)
+                    if self._process_exit_hint(frontend_process, "frontend"):
+                        return
 
                     # Wait for frontend to be ready
                     print("⏳ Waiting for frontend to be ready...")
                     if self.wait_for_service("http://localhost:8501"):
                         print("✅ Frontend is ready!")
                     else:
-                        print("⚠️  Frontend not responding, but process started...")
+                        if self._process_exit_hint(frontend_process, "frontend"):
+                            return
+                        print(
+                            "⚠️  Frontend health check timed out. Frontend is running."
+                        )
                 else:
                     print("❌ Failed to start frontend")
                     return
@@ -756,6 +922,16 @@ run_streamlit_app()
         # Check if pyproject.toml exists
         if not Path("pyproject.toml").exists():
             print("⚠️  pyproject.toml not found, some dependencies might be missing")
+            return False
+
+        if not self._validate_python_runtime():
+            return False
+
+        if not self._bootstrap_env_file():
+            return False
+
+        if not self._validate_required_env_values():
+            return False
 
         print("✅ Environment validation passed")
         return True
@@ -857,7 +1033,9 @@ Environment:
     start_frontend = args.service in ["frontend", "all"]
 
     # Start services
-    manager.start_services(backend=start_backend, frontend=start_frontend)
+    manager.start_services(
+        backend=start_backend, frontend=start_frontend, validate=not args.no_validate
+    )
 
 
 if __name__ == "__main__":

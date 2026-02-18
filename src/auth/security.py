@@ -7,28 +7,23 @@ import secrets
 import string
 from typing import Optional
 
-from passlib.context import CryptContext
+import bcrypt
 
 from src.core.logging import get_logger, log_security_event
 
 logger = get_logger(__name__)
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 class SecurityManager:
     """Security management class for password operations."""
 
-    def __init__(self):
-        self.pwd_context = pwd_context
-
     def hash_password(self, password: str) -> str:
         """Hash a password using bcrypt."""
         try:
-            hashed = self.pwd_context.hash(password)
+            pwd_bytes = password.encode("utf-8")[:72]  # bcrypt max 72 bytes
+            hashed = bcrypt.hashpw(pwd_bytes, bcrypt.gensalt())
             logger.debug("Password hashed successfully")
-            return hashed
+            return hashed.decode("utf-8")
         except Exception as e:
             logger.error("Failed to hash password", error=str(e))
             raise ValueError("Password hashing failed") from e
@@ -36,7 +31,9 @@ class SecurityManager:
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """Verify a password against its hash."""
         try:
-            is_valid = self.pwd_context.verify(plain_password, hashed_password)
+            pwd_bytes = plain_password.encode("utf-8")[:72]
+            hash_bytes = hashed_password.encode("utf-8")
+            is_valid = bcrypt.checkpw(pwd_bytes, hash_bytes)
             if is_valid:
                 logger.debug("Password verification successful")
             else:
@@ -49,9 +46,13 @@ class SecurityManager:
             return False
 
     def needs_rehash(self, hashed_password: str) -> bool:
-        """Check if a password hash needs to be updated."""
+        """Check if a password hash needs to be updated.
+
+        With direct bcrypt usage we consider a rehash needed only if
+        the hash doesn't start with a recognized bcrypt prefix.
+        """
         try:
-            return self.pwd_context.needs_update(hashed_password)
+            return not hashed_password.startswith(("$2b$", "$2a$"))
         except Exception as e:
             logger.error("Error checking if hash needs update", error=str(e))
             return False

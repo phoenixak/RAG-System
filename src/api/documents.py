@@ -62,7 +62,7 @@ def _apply_rate_limit(rate: str):
 )
 @_apply_rate_limit(RATE_LIMIT_AUTHENTICATED)
 async def upload_document(
-    http_request: Request,
+    request: Request,
     file: UploadFile = File(..., description="Document to upload"),
     current_user: TokenData = Depends(require_permission(Permission.UPLOAD)),
 ) -> DocumentResponse:
@@ -294,7 +294,8 @@ async def get_document(
     summary="Delete document and all associated data",
 )
 async def delete_document(
-    document_id: UUID, current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS))
+    document_id: UUID,
+    current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS)),
 ) -> None:
     """
     Delete a document and all its associated chunks and embeddings.
@@ -498,7 +499,8 @@ async def reprocess_document(
     "/bulk", response_model=BulkDeleteResponse, summary="Bulk delete documents"
 )
 async def bulk_delete_documents(
-    request: BulkDeleteRequest, current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS))
+    request: BulkDeleteRequest,
+    current_user: TokenData = Depends(require_permission(Permission.MANAGE_DOCS)),
 ) -> BulkDeleteResponse:
     """
     Delete multiple documents at once.

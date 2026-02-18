@@ -35,10 +35,10 @@ User authentication and document metadata are managed in-memory (with demo users
 | API Framework    | FastAPI 0.104.1, Pydantic 2.5, Uvicorn        |
 | Frontend         | Streamlit 1.28.1                               |
 | Vector Store     | ChromaDB 0.4.15                                |
-| Embeddings       | sentence-transformers 2.2.2                    |
+| Embeddings       | sentence-transformers >=3.0.0                  |
 | Keyword Search   | rank-bm25 0.2.2                                |
 | LLM Providers    | openai, anthropic                              |
-| Auth             | PyJWT, python-jose, passlib (bcrypt)           |
+| Auth             | PyJWT, python-jose, bcrypt                     |
 | Document Parsing | PyPDF2, pdfplumber, python-docx, pandas        |
 | Caching          | Redis 7.2                                      |
 | Tokenization     | tiktoken                                       |
@@ -119,7 +119,7 @@ RAG-System/
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.11 for native local setup (3.12+ requires C++ build tools for chroma-hnswlib)
 - Docker and Docker Compose (for containerized deployment)
 - Internet connection (for downloading the embedding model on first run)
 
@@ -129,15 +129,14 @@ RAG-System/
 git clone https://github.com/phoenixak/RAG-System.git
 cd RAG-System
 
-python -m venv venv
-source venv/bin/activate        # Linux/macOS
-venv\Scripts\activate           # Windows
+python -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+.venv\Scripts\activate           # Windows
 
 pip install -e ".[dev]"
-
-cp .env.example .env
-# Edit .env -- at minimum, set SECRET_KEY and JWT_SECRET_KEY
 ```
+
+On first `python run.py ...` launch, the launcher auto-creates `.env` from `.env.example` if missing and generates development-safe secrets.
 
 ### Running Locally
 
@@ -149,6 +148,12 @@ python run.py
 python run.py backend           # FastAPI on http://localhost:8000
 python run.py frontend          # Streamlit on http://localhost:8501
 ```
+
+Health checks:
+- Backend: `http://localhost:8000/api/v1/health`
+- Frontend: `http://localhost:8501`
+
+> **Note:** Redis and ChromaDB are optional for local development. Without Redis, caching and token blacklisting fall back to in-memory. Without a ChromaDB server, the system falls back to embedded persistent mode (`./chroma_db/`). Without an OpenAI/Anthropic API key, the LLM service runs in demo mode.
 
 ### Running with Docker Compose
 
@@ -162,6 +167,11 @@ docker-compose --profile frontend up
 # Include dev tools (pgAdmin, Redis Commander)
 docker-compose --profile frontend --profile tools up
 ```
+
+Notes:
+- Docker frontend entrypoint is `frontend/app.py`.
+- Inside compose network, API uses `CHROMADB_HOST=chromadb` and `CHROMADB_PORT=8000`.
+- From host machine, mapped ChromaDB port is `8001`.
 
 ### Default Credentials
 
@@ -248,7 +258,7 @@ Key environment variables (see `.env.example` for the full list):
 | DATABASE_URL            | postgresql://...                             | Database connection string           |
 | REDIS_URL               | redis://localhost:6379                        | Redis connection string              |
 | CHROMADB_HOST           | localhost                                    | ChromaDB server host                 |
-| CHROMADB_PORT           | 8000                                         | ChromaDB server port                 |
+| CHROMADB_PORT           | 8001                                         | ChromaDB host port (compose internal service port is 8000) |
 | EMBEDDING_MODEL         | sentence-transformers/all-MiniLM-L6-v2       | Embedding model name                 |
 | CHUNK_SIZE              | 1000                                         | Text chunk size (characters)         |
 | CHUNK_OVERLAP           | 200                                          | Overlap between chunks               |
@@ -257,6 +267,23 @@ Key environment variables (see `.env.example` for the full list):
 | ANTHROPIC_API_KEY       | *(optional)*                                 | Anthropic API key for LLM responses  |
 | ENVIRONMENT             | development                                  | Runtime environment                  |
 | DEBUG                   | false                                        | Enable debug mode and API docs       |
+
+## Troubleshooting
+
+- `No module named 'requests'`:
+  - Run `pip install -e ".[dev]"` (or `pip install -e .`) to install project dependencies.
+- `chroma-hnswlib` build errors on Windows/Python 3.12:
+  - Use Python 3.11 for native local setup, or install Microsoft C++ Build Tools.
+- `.env`/`SECRET_KEY` startup failures:
+  - Delete broken `.env` and rerun `python run.py all` to regenerate, or set `SECRET_KEY` manually to 32+ characters.
+- Windows `UnicodeEncodeError` during launcher output:
+  - The launcher now falls back to ASCII-safe output automatically; update to latest repo state if you still see this.
+- Backend health check timeout:
+  - Inspect prefixed logs in terminal (`[BACKEND] ...`) for the root cause.
+- `passlib` / `bcrypt` incompatibility:
+  - The project uses `bcrypt` directly instead of `passlib`. If you see passlib errors, ensure `pyproject.toml` lists `bcrypt>=4.0.0` (not `passlib[bcrypt]`) and reinstall.
+- `run.py all` subprocess can't find `uvicorn` or `streamlit`:
+  - Ensure your virtualenv is at `.venv/` in the project root. The launcher auto-detects it. If using a different venv location, activate it before running.
 
 ## Testing
 

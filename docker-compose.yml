@@ -72,7 +72,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["streamlit", "run", "run.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    command: ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     ports:
       - "8501:8501"
     volumes:
