@@ -6,11 +6,18 @@ Handles environment-based settings and application configuration.
 from typing import List, Optional
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # Application Settings
     app_name: str = "Enterprise RAG System"
@@ -103,12 +110,6 @@ class Settings(BaseSettings):
     @classmethod
     def validate_file_types(cls, v):
         return [ext.lower() for ext in v]
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
 
 
 # Global settings instance

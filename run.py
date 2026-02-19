@@ -411,6 +411,14 @@ def run_streamlit_app():
         initial_sidebar_state=STREAMLIT_CONFIG["initial_sidebar_state"],
     )
 
+    # Inject global dark & technical styles
+    try:
+        from frontend.components.styles import apply_global_styles
+
+        apply_global_styles()
+    except Exception:
+        pass  # Style injection failure must never crash the app
+
     # Initialize session state
     init_auth_state()
     init_chat_state()
@@ -451,7 +459,24 @@ def show_sidebar_navigation():
     """Show navigation sidebar for authenticated users."""
     import streamlit as st
 
-    st.sidebar.title("🤖 Enterprise RAG")
+    # Styled sidebar brand
+    st.sidebar.markdown(
+        """
+        <div style="padding: 0.5rem 0 0.8rem 0;">
+            <div style="font-family: var(--font-mono, monospace); font-size: 0.68rem;
+                        text-transform: uppercase; letter-spacing: 0.12em;
+                        color: var(--text-muted, #475569); margin-bottom: 0.2rem;">
+                Enterprise
+            </div>
+            <div style="font-family: var(--font-display, sans-serif); font-size: 1.2rem;
+                        font-weight: 800; color: var(--text-primary, #e2e8f0);
+                        letter-spacing: -0.02em; line-height: 1;">
+                RAG <span style="color: var(--accent-cyan, #00d4ff);">System</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     # Show user info and logout
     from frontend.components.auth import show_logout_button
@@ -461,27 +486,33 @@ def show_sidebar_navigation():
     st.sidebar.markdown("---")
 
     # Navigation menu
-    st.sidebar.markdown("### 📋 Navigation")
+    st.sidebar.markdown(
+        "<div style='font-family:var(--font-mono,monospace); font-size:0.7rem; "
+        "text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted,#475569); "
+        "margin-bottom:0.4rem;'>Navigation</div>",
+        unsafe_allow_html=True,
+    )
 
-    # Main pages
+    # Main pages — clean labels without emoji overload
     pages = {
-        "💬 Chat": "chat",
-        "📄 Documents": "documents",
-        "🔍 Search": "search",
-        "⚙️ Settings": "settings",
+        "Chat": "chat",
+        "Documents": "documents",
+        "Search": "search",
+        "Settings": "settings",
     }
 
     # Add admin page for admin users
     from frontend.components.auth import is_admin
 
     if is_admin():
-        pages["👨‍💼 Admin"] = "admin"
+        pages["Admin"] = "admin"
 
-    # Create navigation buttons
+    current_page = st.session_state.get("current_page", "chat")
+
     for page_name, page_key in pages.items():
-        if st.sidebar.button(
-            page_name, key=f"nav_{page_key}", use_container_width=True
-        ):
+        # Highlight active page label
+        label = f"> {page_name}" if page_key == current_page else page_name
+        if st.sidebar.button(label, key=f"nav_{page_key}", use_container_width=True):
             st.session_state.current_page = page_key
             st.rerun()
 
@@ -495,7 +526,12 @@ def show_quick_stats():
     """Show quick statistics in sidebar."""
     import streamlit as st
 
-    st.sidebar.markdown("### 📊 Quick Stats")
+    st.sidebar.markdown(
+        "<div style='font-family:var(--font-mono,monospace); font-size:0.7rem; "
+        "text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted,#475569); "
+        "margin-bottom:0.4rem;'>Stats</div>",
+        unsafe_allow_html=True,
+    )
 
     try:
         from frontend.components.api_client import get_api_client
@@ -510,12 +546,12 @@ def show_quick_stats():
             total_docs = docs_response.get("total", 0)
 
             # Show stats
-            st.sidebar.metric("📄 Documents", total_docs)
+            st.sidebar.metric("Documents", total_docs)
 
         # Chat history count (this doesn't require API call)
         chat_history = st.session_state.get(SESSION_KEYS["chat_history"], [])
         user_messages = len([msg for msg in chat_history if msg.get("role") == "user"])
-        st.sidebar.metric("💬 Messages", user_messages)
+        st.sidebar.metric("Messages", user_messages)
 
     except Exception:
         # Don't show warning, just show basic stats
@@ -523,7 +559,7 @@ def show_quick_stats():
 
         chat_history = st.session_state.get(SESSION_KEYS["chat_history"], [])
         user_messages = len([msg for msg in chat_history if msg.get("role") == "user"])
-        st.sidebar.metric("💬 Messages", user_messages)
+        st.sidebar.metric("Messages", user_messages)
 
 
 def show_main_content():
@@ -761,9 +797,11 @@ run_streamlit_app()
             "--server.address=0.0.0.0",
             "--server.headless=true",
             "--browser.gatherUsageStats=false",
-            "--theme.primaryColor=#FF6B6B",
-            "--theme.backgroundColor=#FFFFFF",
-            "--theme.secondaryBackgroundColor=#F0F2F6",
+            "--theme.primaryColor=#00d4ff",
+            "--theme.backgroundColor=#080c16",
+            "--theme.secondaryBackgroundColor=#0f1422",
+            "--theme.textColor=#e2e8f0",
+            "--theme.font=monospace",
         ]
 
         try:
@@ -840,9 +878,13 @@ run_streamlit_app()
                     if self._process_exit_hint(backend_process, "backend"):
                         return
 
-                    # Wait for backend to be ready
-                    print("⏳ Waiting for backend to be ready...")
-                    if self.wait_for_service("http://localhost:8000/api/v1/health"):
+                    # Wait for backend to be ready (model loading can take ~60s on first run)
+                    print(
+                        "⏳ Waiting for backend to be ready (embedding model loading may take ~60s)..."
+                    )
+                    if self.wait_for_service(
+                        "http://localhost:8000/api/v1/health", timeout=90
+                    ):
                         print("✅ Backend is ready!")
                     else:
                         if self._process_exit_hint(backend_process, "backend"):

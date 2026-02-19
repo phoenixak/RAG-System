@@ -5,7 +5,7 @@ developmentMode = false
 port = 8501
 address = "0.0.0.0"
 baseUrlPath = ""
-enableCORS = false
+enableCORS = true
 enableXsrfProtection = true
 maxUploadSize = 200
 maxMessageSize = 200
@@ -14,23 +14,17 @@ enableWebsocketCompression = false
 [browser]
 serverAddress = "localhost"
 gatherUsageStats = false
-showErrorDetails = false
-
-[logger]
-level = "info"
-messageFormat = "%(asctime)s %(message)s"
 
 [client]
 caching = true
 displayEnabled = true
-showErrorDetails = false
 
 [theme]
-primaryColor = "#FF6B6B"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F2F6"
-textColor = "#262730"
-font = "sans serif"
+primaryColor = "#00d4ff"
+backgroundColor = "#080c16"
+secondaryBackgroundColor = "#0f1422"
+textColor = "#e2e8f0"
+font = "monospace"
 
 [runner]
 magicEnabled = true
@@ -43,7 +37,3 @@ enforceSerializableSessionState = false
 [mapbox]
 token = ""
 
-[deprecation]
-showfileUploaderEncoding = false
-showImageFormat = false
-showPyplotGlobalUse = false

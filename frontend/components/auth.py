@@ -240,60 +240,96 @@ def is_admin() -> bool:
 
 
 def show_login_page():
-    """Display full login page."""
-    st.title("🤖 Enterprise RAG System")
-    st.markdown("---")
+    """Display full login page with styled hero section."""
+    # Hero section
+    try:
+        from frontend.components.styles import (
+            render_login_hero,
+            render_status_indicator,
+        )
 
-    # Check backend health
-    col1, col2 = st.columns([2, 1])
+        render_login_hero()
+    except Exception:
+        st.title("Enterprise RAG System")
 
-    with col1:
-        st.markdown("""
-        ### Welcome to the Enterprise RAG System
-        
-        A comprehensive document search and conversational AI platform that enables:
-        
-        - 📄 **Document Management**: Upload and manage multiple file formats
-        - 🔍 **Intelligent Search**: Semantic, hybrid, and contextual search capabilities  
-        - 💬 **Conversational AI**: Chat interface with document context
-        - ⚙️ **Advanced Settings**: Customize search parameters and preferences
-        - 👨‍💼 **Admin Dashboard**: System monitoring and management (admin only)
-        """)
+    # Two-column layout: status left, login form right
+    col_left, col_right = st.columns([1, 1], gap="large")
 
-    with col2:
-        # Backend health check
-        with st.container():
-            st.subheader("🩺 System Status")
+    with col_left:
+        # System status card
+        st.markdown(
+            "<div style='font-family:var(--font-mono,monospace); font-size:0.72rem; "
+            "text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted,#475569); "
+            "margin-bottom:0.6rem;'>System Status</div>",
+            unsafe_allow_html=True,
+        )
+        try:
+            api_client = get_api_client()
+            health = api_client.health_check()
+            online = health.get("status") == "healthy"
+            version = health.get("version", "N/A")
+            env = health.get("environment", "N/A")
             try:
-                api_client = get_api_client()
-                health = api_client.health_check()
+                from frontend.components.styles import render_status_indicator
 
-                if health.get("status") == "healthy":
-                    st.success("✅ Backend Online")
-                    st.write(f"**Version:** {health.get('version', 'N/A')}")
-                    st.write(f"**Environment:** {health.get('environment', 'N/A')}")
+                render_status_indicator(online, "Backend API", f"v{version} / {env}")
+            except Exception:
+                if online:
+                    st.success(f"Backend Online — v{version}")
                 else:
-                    st.warning("⚠️ Backend Issues")
+                    st.warning("Backend Issues Detected")
+        except Exception as e:
+            try:
+                from frontend.components.styles import render_status_indicator
 
-            except Exception as e:
-                st.error("❌ Backend Offline")
-                st.error(f"Error: {str(e)}")
+                render_status_indicator(False, "Backend Offline", str(e)[:60])
+            except Exception:
+                st.error(f"Backend Offline: {str(e)}")
 
-    st.markdown("---")
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # Login form
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+        # Feature list
+        st.markdown(
+            """
+            <div style="font-family:var(--font-mono,monospace); font-size:0.78rem;
+                        color:var(--text-secondary,#94a3b8); line-height:2;">
+                <div><span style="color:var(--accent-cyan,#00d4ff);">&#x25B6;</span>
+                     &nbsp;Document Management (PDF, DOCX, TXT, CSV)</div>
+                <div><span style="color:var(--accent-cyan,#00d4ff);">&#x25B6;</span>
+                     &nbsp;Semantic &amp; Hybrid Vector Search</div>
+                <div><span style="color:var(--accent-cyan,#00d4ff);">&#x25B6;</span>
+                     &nbsp;Contextual Conversational AI</div>
+                <div><span style="color:var(--accent-cyan,#00d4ff);">&#x25B6;</span>
+                     &nbsp;LLM-Powered Response Generation</div>
+                <div><span style="color:var(--accent-cyan,#00d4ff);">&#x25B6;</span>
+                     &nbsp;Admin Dashboard &amp; Analytics</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with col_right:
+        st.markdown(
+            "<div style='font-family:var(--font-mono,monospace); font-size:0.72rem; "
+            "text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted,#475569); "
+            "margin-bottom:0.6rem;'>Sign In</div>",
+            unsafe_allow_html=True,
+        )
         show_login_form()
 
-    # Demo credentials info
-    with st.expander("🔑 Demo Credentials"):
-        st.info("""
-        **Admin User:**
-        - Email: admin@example.com
-        - Password: admin123!
-        
-        **Regular User:**
-        - Email: user@example.com
-        - Password: password123!
-        """)
+    st.markdown("---")
+
+    # Demo credentials
+    with st.expander("Demo Credentials"):
+        st.markdown(
+            """
+            <div style="font-family:var(--font-mono,monospace); font-size:0.82rem;
+                        color:var(--text-secondary,#94a3b8); line-height:1.8;">
+                <strong style="color:var(--accent-cyan,#00d4ff);">Admin</strong><br>
+                &nbsp;&nbsp;admin@example.com &nbsp;/&nbsp; admin123!<br><br>
+                <strong style="color:var(--accent-cyan,#00d4ff);">User</strong><br>
+                &nbsp;&nbsp;user@example.com &nbsp;/&nbsp; password123!
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )

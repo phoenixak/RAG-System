@@ -85,7 +85,22 @@ def display_chat_history():
     chat_history = st.session_state.get(SESSION_KEYS["chat_history"], [])
 
     if not chat_history:
-        st.info("💬 Start a conversation by asking a question about your documents!")
+        st.markdown(
+            """
+            <div style="
+                text-align: center;
+                padding: 3rem 1rem;
+                color: var(--text-muted, #475569);
+                font-family: var(--font-mono, monospace);
+                font-size: 0.85rem;
+                letter-spacing: 0.04em;
+            ">
+                <div style="font-size: 2rem; margin-bottom: 0.8rem; opacity: 0.4;">&#x2B21;</div>
+                No messages yet &mdash; ask a question to get started
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     # Display messages
@@ -103,11 +118,11 @@ def display_chat_history():
                 st.write(content)
 
                 # Show search results if available
-                if "search_results" in metadata:
+                if "search_results" in metadata and metadata["search_results"]:
                     show_search_results_in_chat(metadata["search_results"])
 
                 # Show search metadata
-                if "search_metadata" in metadata:
+                if "search_metadata" in metadata and metadata["search_metadata"]:
                     show_search_metadata(metadata["search_metadata"])
 
 
@@ -117,46 +132,44 @@ def show_search_results_in_chat(search_results: List[Dict]):
         return
 
     with st.expander(
-        f"📄 Retrieved Documents ({len(search_results)} results)", expanded=False
+        f"Retrieved Documents ({len(search_results)} sources)", expanded=False
     ):
         for i, result in enumerate(search_results, 1):
             with st.container():
-                # Document header
-                col1, col2 = st.columns([3, 1])
+                col1, col2 = st.columns([5, 1])
                 with col1:
-                    # Fix: Backend returns multiple possible field names for document
                     doc_name = result.get(
                         "document_filename",
                         result.get("document_name", "Unknown Document"),
                     )
-                    st.write(f"**{i}. {doc_name}**")
+                    st.markdown(f"**{i}. {doc_name}**")
                 with col2:
                     score = result.get("score", 0)
-                    st.write(f"⭐ {score:.3f}")
+                    st.caption(f"{score:.3f}")
 
-                # Content preview
-                # Fix: Backend returns 'text' field, not 'content'
                 content = result.get("text", result.get("content", ""))
-                if len(content) > 200:
-                    st.write(f"{content[:200]}...")
-                else:
-                    st.write(content)
+                preview = content[:200] + "..." if len(content) > 200 else content
+                st.markdown(
+                    f"<div style='font-size:0.84rem; color:var(--text-secondary,#94a3b8); "
+                    f"line-height:1.5; margin-top:0.25rem;'>{preview}</div>",
+                    unsafe_allow_html=True,
+                )
 
-                # Metadata
                 if result.get("page_number"):
                     st.caption(f"Page {result['page_number']}")
 
-                st.divider()
+                if i < len(search_results):
+                    st.divider()
 
 
 def show_search_metadata(metadata: Dict):
     """Display search metadata information."""
-    with st.expander("🔍 Search Details", expanded=False):
+    with st.expander("Search Details", expanded=False):
         col1, col2, col3 = st.columns(3)
 
         with col1:
             search_type = metadata.get("search_type", "N/A")
-            st.metric("Search Type", search_type)
+            st.metric("Search Type", search_type.title())
 
         with col2:
             response_time = metadata.get("response_time", 0)
@@ -168,58 +181,45 @@ def show_search_metadata(metadata: Dict):
 
 
 def chat_input_handler():
-    """Handle chat input and process user queries."""
-    # Chat input
+    """
+    Handle chat input and process user queries.
+
+    Adds messages to history then reruns so display_chat_history() renders
+    everything — avoids double-rendering messages on the same frame.
+    """
     user_input = st.chat_input("Ask a question about your documents...")
 
-    if user_input:
-        # Add user message to chat
-        add_message_to_chat("user", user_input)
+    if not user_input:
+        return
 
-        # Display user message immediately
-        with st.chat_message("user"):
-            st.write(user_input)
+    # Add user message to history first
+    add_message_to_chat("user", user_input)
 
-        # Process query and get response
-        with st.chat_message("assistant"):
-            response_placeholder = st.empty()
+    # Show a quick spinner while processing (before rerun)
+    with st.spinner("Searching documents..."):
+        try:
+            conversation_id = get_conversation_id()
+            search_type = st.session_state.get("chat_search_type", "semantic")
+            search_results, search_metadata = perform_search(
+                user_input, search_type, conversation_id
+            )
+            response = generate_chat_response(user_input, search_results)
 
-            try:
-                with st.spinner("Searching documents..."):
-                    # Get conversation ID
-                    conversation_id = get_conversation_id()
+            add_message_to_chat(
+                "assistant",
+                response,
+                {
+                    "search_results": search_results,
+                    "search_metadata": search_metadata,
+                },
+            )
 
-                    # Perform search based on selected type
-                    search_type = st.session_state.get("chat_search_type", "semantic")
-                    search_results, search_metadata = perform_search(
-                        user_input, search_type, conversation_id
-                    )
+        except Exception as e:
+            error_msg = f"Sorry, I encountered an error: {str(e)}"
+            add_message_to_chat("assistant", error_msg)
 
-                    # Generate response based on search results
-                    response = generate_chat_response(user_input, search_results)
-
-                    # Display response
-                    response_placeholder.write(response)
-
-                    # Show search results
-                    if search_results:
-                        show_search_results_in_chat(search_results)
-                        show_search_metadata(search_metadata)
-
-                    # Add assistant message to chat
-                    add_message_to_chat(
-                        "assistant",
-                        response,
-                        {
-                            "search_results": search_results,
-                            "search_metadata": search_metadata,
-                        },
-                    )
-
-            except Exception as e:
-                error_msg = f"Sorry, I encountered an error: {str(e)}"
-                response_placeholder.error(error_msg)
-                add_message_to_chat("assistant", error_msg)
+    # Rerun to render everything cleanly via display_chat_history()
+    st.rerun()
 
 
 def perform_search(query: str, search_type: str, conversation_id: str) -> tuple:
@@ -252,11 +252,9 @@ def perform_search(query: str, search_type: str, conversation_id: str) -> tuple:
             result = api_client.contextual_search(query, conversation_id, limit=limit)
 
         else:
-            # Default to semantic
             result = api_client.semantic_search(query, limit=limit)
 
         response_time = time.time() - start_time
-
         search_results = result.get("results", [])
         search_metadata = {
             "search_type": search_type,
@@ -279,22 +277,17 @@ def generate_chat_response(
 ) -> str:
     """Generate a chat response using LLM service or fallback to basic response."""
     try:
-        # Try to use LLM service for intelligent response generation
         from frontend.components.api_client import get_api_client
 
         api_client = get_api_client()
-
-        # Call the LLM service through the API
         llm_response = api_client.generate_llm_response(
             query=query,
             search_results=search_results,
             conversation_history=conversation_history or [],
         )
-
         return llm_response
 
     except Exception as e:
-        # Fallback to the original simple response generation
         st.warning(f"LLM service unavailable, using basic response: {str(e)}")
         return _generate_fallback_response(query, search_results)
 
@@ -310,95 +303,92 @@ def _generate_fallback_response(query: str, search_results: List[Dict]) -> str:
 
 You can upload documents using the Documents page and try searching again."""
 
-    # Create a response based on search results
     num_results = len(search_results)
+    response = (
+        f"I found {num_results} relevant document{'s' if num_results != 1 else ''} "
+        "that match your query. Here's what I found:\n\n"
+    )
 
-    if num_results == 1:
-        response = "I found 1 relevant document that matches your query. "
-    else:
-        response = f"I found {num_results} relevant documents that match your query. "
-
-    # Add summary of top results
-    top_results = search_results[:3]  # Show top 3
-    response += "Here's what I found:\n\n"
-
-    for i, result in enumerate(top_results, 1):
-        # Fix: Backend returns multiple possible field names
+    for i, result in enumerate(search_results[:3], 1):
         doc_name = result.get(
             "document_filename", result.get("document_name", "Unknown Document")
         )
         content = result.get("text", result.get("content", ""))
         score = result.get("score", 0)
-
-        # Truncate content for summary
         summary = content[:150] + "..." if len(content) > 150 else content
 
         response += f"**{i}. {doc_name}** (relevance: {score:.1%})\n"
         response += f"{summary}\n\n"
 
     if num_results > 3:
-        response += f"*See the expanded results below for {num_results - 3} additional documents.*\n\n"
+        response += f"*See retrieved documents below for {num_results - 3} additional source(s).*\n\n"
 
-    response += "💡 **Tip**: You can click on the 'Retrieved Documents' section below to see the full content and details."
-
+    response += "Expand **Retrieved Documents** below to see full source content."
     return response
 
 
 def show_chat_controls():
-    """Display chat control buttons."""
-    col1, col2, col3, col4 = st.columns(4)
+    """
+    Display chat control buttons in a horizontal row.
+    Search type is NOT included here — it lives in the Settings expander
+    to avoid duplicate widget key conflicts.
+    """
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        if st.button("🗑️ Clear Chat", help="Clear conversation history"):
+        if st.button(
+            "Clear Chat",
+            key="ctrl_clear_chat",
+            help="Clear conversation history",
+            use_container_width=True,
+        ):
             clear_chat_history()
 
     with col2:
-        if st.button("🔄 New Session", help="Start a new conversation"):
+        if st.button(
+            "New Session",
+            key="ctrl_new_session",
+            help="Start a new conversation session",
+            use_container_width=True,
+        ):
             create_new_conversation()
             st.rerun()
 
     with col3:
-        if st.button("📥 Export Chat", help="Export conversation"):
+        if st.button(
+            "Export Chat",
+            key="ctrl_export_chat",
+            help="Export conversation as JSON",
+            use_container_width=True,
+        ):
             export_chat_history()
-
-    with col4:
-        # Search type selector
-        search_type = st.selectbox(
-            "Search Type",
-            options=["semantic", "hybrid", "contextual"],
-            key="chat_search_type",
-            help="Choose the search method",
-        )
 
 
 def clear_chat_history():
     """Clear the chat history."""
     st.session_state[SESSION_KEYS["chat_history"]] = []
 
-    # Clear conversation on server if available
     conversation_id = st.session_state.get(SESSION_KEYS["conversation_id"])
     if conversation_id:
         try:
             api_client = get_api_client()
             api_client.clear_conversation(conversation_id)
         except Exception:
-            pass  # Ignore server errors for clearing
+            pass
 
-    st.success("Chat history cleared!")
     st.rerun()
 
 
 def export_chat_history():
-    """Export chat history as JSON."""
+    """Export chat history as JSON download button."""
+    import json
+
     chat_history = st.session_state.get(SESSION_KEYS["chat_history"], [])
 
     if not chat_history:
         st.warning("No chat history to export.")
         return
 
-    import json
-
-    # Prepare export data
     export_data = {
         "conversation_id": st.session_state.get(SESSION_KEYS["conversation_id"]),
         "export_timestamp": time.time(),
@@ -406,15 +396,14 @@ def export_chat_history():
         "messages": chat_history,
     }
 
-    # Convert to JSON
     json_str = json.dumps(export_data, indent=2, default=str)
 
-    # Download button
     st.download_button(
-        label="📥 Download Chat History",
+        label="Download JSON",
         data=json_str,
         file_name=f"chat_history_{int(time.time())}.json",
         mime="application/json",
+        key="download_chat_json",
     )
 
 
