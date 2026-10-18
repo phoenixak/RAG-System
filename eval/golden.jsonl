@@ -1,0 +1,46 @@
+{"q": "What are the core collaboration hours?", "source": "01-employee-handbook.md", "expect": ["10:00", "15:00"]}
+{"q": "Can I book an internal meeting on a Friday?", "source": "01-employee-handbook.md", "expect": ["focus"]}
+{"q": "How is overtime compensated?", "source": "01-employee-handbook.md", "expect": ["1.5"]}
+{"q": "How long can I work from another country without approval?", "source": "01-employee-handbook.md", "expect": ["30"]}
+{"q": "How much is the home-office allowance?", "source": "01-employee-handbook.md", "expect": ["800"]}
+{"q": "How many days of annual leave do employees get?", "source": "01-employee-handbook.md", "expect": ["25"]}
+{"q": "How many unused vacation days can be carried over?", "source": "01-employee-handbook.md", "expect": ["5"]}
+{"q": "When do I need a doctor's note for sick leave?", "source": "01-employee-handbook.md", "expect": ["3"]}
+{"q": "How long is parental leave for the primary caregiver?", "source": "01-employee-handbook.md", "expect": ["20 weeks"]}
+{"q": "What is the yearly learning budget?", "source": "01-employee-handbook.md", "expect": ["1,500"]}
+{"q": "How often are laptops refreshed?", "source": "01-employee-handbook.md", "expect": ["three years"]}
+{"q": "How long do I have to submit an expense claim?", "source": "02-expense-policy.md", "expect": ["60 days"]}
+{"q": "Who has to approve an expense claim of 3,000 dollars?", "source": "02-expense-policy.md", "expect": ["Finance Director"]}
+{"q": "What is the limit per person for client entertainment?", "source": "02-expense-policy.md", "expect": ["90"]}
+{"q": "Can I expense a parking fine?", "source": "02-expense-policy.md", "expect": ["not"]}
+{"q": "How quickly must corporate card statements be reconciled?", "source": "02-expense-policy.md", "expect": ["15 days"]}
+{"q": "What is the minimum password length?", "source": "03-security-policy.md", "expect": ["14"]}
+{"q": "Who needs a hardware security key?", "source": "03-security-policy.md", "expect": ["production"]}
+{"q": "How soon must a security incident be reported?", "source": "03-security-policy.md", "expect": ["1 hour"]}
+{"q": "After how many minutes must a laptop lock automatically?", "source": "03-security-policy.md", "expect": ["5 minutes"]}
+{"q": "How is customer data classified?", "source": "03-security-policy.md", "expect": ["Restricted"]}
+{"q": "How long does a vendor security review take?", "source": "03-security-policy.md", "expect": ["5 working days"]}
+{"q": "What is the refund window for annual plans?", "source": "04-customer-refund-policy.md", "expect": ["30 days"]}
+{"q": "Do you refund a partial month on a monthly plan?", "source": "04-customer-refund-policy.md", "expect": ["not"]}
+{"q": "What fee applies when cancelling an annual plan after 30 days?", "source": "04-customer-refund-policy.md", "expect": ["10%"]}
+{"q": "How long does it take to receive a refund?", "source": "04-customer-refund-policy.md", "expect": ["14 days"]}
+{"q": "Are enterprise contracts covered by the refund policy?", "source": "04-customer-refund-policy.md", "expect": ["order form"]}
+{"q": "What is the uptime commitment for Beacon?", "source": "05-support-sla.md", "expect": ["99.9"]}
+{"q": "What service credit do I get if uptime falls below 95 percent?", "source": "05-support-sla.md", "expect": ["50%"]}
+{"q": "What is the first response time for a Sev 1 issue on the Enterprise plan?", "source": "05-support-sla.md", "expect": ["15 minutes"]}
+{"q": "When are maintenance windows?", "source": "05-support-sla.md", "expect": ["Sunday"]}
+{"q": "When can I fly business class?", "source": "06-travel-policy.md", "expect": ["10 hours"]}
+{"q": "What is the hotel cap in Lisbon?", "source": "06-travel-policy.md", "expect": ["180"]}
+{"q": "How much is the daily per diem in London?", "source": "06-travel-policy.md", "expect": ["95"]}
+{"q": "What is the mileage rate for using my own car?", "source": "06-travel-policy.md", "expect": ["0.55"]}
+{"q": "When does security training have to be completed?", "source": "07-onboarding-guide.md", "expect": ["5 working days"]}
+{"q": "How long is the probation period?", "source": "07-onboarding-guide.md", "expect": ["3 months"]}
+{"q": "How long is raw event data kept on the Business plan?", "source": "08-beacon-product-faq.md", "expect": ["13 months"]}
+{"q": "Which plan includes SAML single sign-on?", "source": "08-beacon-product-faq.md", "expect": ["Enterprise"]}
+{"q": "What is the query API rate limit?", "source": "08-beacon-product-faq.md", "expect": ["60"]}
+{"q": "Can I change my workspace data region later?", "source": "08-beacon-product-faq.md", "expect": ["cannot"]}
+{"q": "What discount do I get for annual billing?", "source": "08-beacon-product-faq.md", "expect": ["15%"]}
+{"q": "What is the company's stock ticker symbol?", "source": null, "expect": []}
+{"q": "How many employees does Lanternfish have in Tokyo?", "source": null, "expect": []}
+{"q": "Does the gym membership get reimbursed?", "source": null, "expect": []}
+{"q": "What is the dress code for client meetings?", "source": null, "expect": []}

@@ -1,175 +1,83 @@
-"""
-Tests for API endpoint definitions and routing.
-Tests router configuration, request/response models, and endpoint behaviors.
-"""
-
-import uuid
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
 
 import pytest
+from conftest import CORPUS, HashEmbedder, OverlapReranker, ScriptedLLM
+from fastapi.testclient import TestClient
 
-from src.documents.models import (
-    BulkDeleteRequest,
-    DocumentListResponse,
-    DocumentResponse,
-    DocumentStatsResponse,
-    DocumentType,
-    ProcessingStatus,
-)
-from src.search.models import (
-    HybridSearchRequest,
-    MetadataFilter,
-    SearchRequest,
-    SearchType,
-    SemanticSearchRequest,
-    SortOrder,
-)
+from api import auth
+from api.app import app
+from rag import RAG, Settings
+
+PASSWORD = "correct horse battery"
 
 
-class TestSearchRequestModels:
-    """Tests for search request model validation."""
-
-    def test_search_request_valid(self):
-        """Test valid search request."""
-        req = SearchRequest(query="machine learning")
-        assert req.query == "machine learning"
-        assert req.limit == 10
-        assert req.offset == 0
-
-    def test_search_request_empty_query_rejected(self):
-        """Test empty query is rejected."""
-        with pytest.raises(ValueError):
-            SearchRequest(query="")
-
-    def test_search_request_query_too_long(self):
-        """Test overly long query is rejected."""
-        with pytest.raises(ValueError):
-            SearchRequest(query="x" * 1001)
-
-    def test_search_request_limit_bounds(self):
-        """Test limit must be within bounds."""
-        with pytest.raises(ValueError):
-            SearchRequest(query="test", limit=0)
-        with pytest.raises(ValueError):
-            SearchRequest(query="test", limit=101)
-
-    def test_semantic_search_request(self):
-        """Test SemanticSearchRequest with custom threshold."""
-        req = SemanticSearchRequest(
-            query="deep learning",
-            similarity_threshold=0.5,
-            include_embeddings=True,
-        )
-        assert req.similarity_threshold == 0.5
-        assert req.include_embeddings is True
-
-    def test_hybrid_search_request_weights(self):
-        """Test HybridSearchRequest weight validation."""
-        req = HybridSearchRequest(
-            query="neural networks",
-            semantic_weight=0.7,
-            keyword_weight=0.3,
-        )
-        assert req.semantic_weight == 0.7
-        assert req.keyword_weight == 0.3
-
-    def test_metadata_filter(self):
-        """Test MetadataFilter model."""
-        filt = MetadataFilter(
-            document_type="pdf",
-            uploaded_by="user123",
-        )
-        assert filt.document_type == "pdf"
-
-    def test_sort_order_values(self):
-        """Test SortOrder enum."""
-        assert SortOrder.RELEVANCE == "relevance"
-        assert SortOrder.DATE_ASC == "date_asc"
-        assert SortOrder.DATE_DESC == "date_desc"
-
-    def test_search_type_values(self):
-        """Test SearchType enum."""
-        assert SearchType.SEMANTIC == "semantic"
-        assert SearchType.KEYWORD == "keyword"
-        assert SearchType.HYBRID == "hybrid"
+@pytest.fixture(scope="module")
+def client():
+    h = auth.hash_password(PASSWORD)
+    auth.USERS.clear()
+    auth.USERS.update({name: (h, auth.Role[name]) for name in ("read_only", "standard_user", "power_user", "admin")})
+    rag = RAG(
+        Settings(llm_backend="none", min_relevance=0.0, chunk_tokens=80, chunk_overlap=15),
+        embedder=HashEmbedder(),
+        reranker=OverlapReranker(),
+        llm=ScriptedLLM(),
+    )
+    rag.add_folder(CORPUS)
+    app.state.rag = rag
+    with TestClient(app) as c:
+        yield c
 
 
-class TestDocumentResponseModels:
-    """Tests for document response models."""
-
-    def test_document_response(self):
-        """Test DocumentResponse model."""
-        resp = DocumentResponse(
-            id=uuid.uuid4(),
-            filename="test.pdf",
-            document_type=DocumentType.PDF,
-            size=1024,
-            processing_status=ProcessingStatus.COMPLETED,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-            uploaded_by="test_user",
-        )
-        assert resp.filename == "test.pdf"
-        assert resp.processing_status == ProcessingStatus.COMPLETED
-
-    def test_document_list_response(self):
-        """Test DocumentListResponse model."""
-        doc = DocumentResponse(
-            id=uuid.uuid4(),
-            filename="test.pdf",
-            document_type=DocumentType.PDF,
-            size=1024,
-            processing_status=ProcessingStatus.QUEUED,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-            uploaded_by="user1",
-        )
-        resp = DocumentListResponse(
-            documents=[doc],
-            total=1,
-            page=1,
-            page_size=50,
-            total_pages=1,
-        )
-        assert resp.total == 1
-        assert len(resp.documents) == 1
-
-    def test_bulk_delete_request_validation(self):
-        """Test BulkDeleteRequest requires confirmation."""
-        with pytest.raises(ValueError):
-            BulkDeleteRequest(
-                document_ids=[uuid.uuid4()],
-                confirm_deletion=False,
-            )
-
-    def test_bulk_delete_request_valid(self):
-        """Test valid BulkDeleteRequest."""
-        req = BulkDeleteRequest(
-            document_ids=[uuid.uuid4()],
-            confirm_deletion=True,
-        )
-        assert len(req.document_ids) == 1
-
-    def test_document_stats_response(self):
-        """Test DocumentStatsResponse model."""
-        stats = DocumentStatsResponse(
-            total_documents=100,
-            total_chunks=500,
-            processing_queue_size=3,
-            storage_size_bytes=1024 * 1024,
-            status_counts={ProcessingStatus.COMPLETED: 90, ProcessingStatus.QUEUED: 10},
-            type_counts={DocumentType.PDF: 60, DocumentType.TXT: 40},
-        )
-        assert stats.total_documents == 100
-        assert stats.total_chunks == 500
+def login(client, user):
+    r = client.post("/auth/token", data={"username": user, "password": PASSWORD})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-class TestHealthEndpoint:
-    """Tests for health check endpoint logic."""
+def test_health_is_public(client):
+    assert client.get("/health").json()["documents"] == 8
 
-    def test_health_router_exists(self):
-        """Test health router is properly defined."""
-        from src.api.health import router
 
-        assert router is not None
+def test_wrong_password_and_missing_token(client):
+    assert client.post("/auth/token", data={"username": "admin", "password": "nope"}).status_code == 401
+    assert client.post("/search", json={"query": "leave"}).status_code == 401
+
+
+def test_search_returns_every_score(client):
+    r = client.post("/search", json={"query": "hotel cap in Lisbon"}, headers=login(client, "read_only"))
+    hit = r.json()["hits"][0]
+    assert hit["source"] == "06-travel-policy.md"
+    assert set(hit["scores"]) >= {"vector", "bm25", "fused", "rerank"}
+
+
+def test_ask_json_and_stream(client):
+    h = login(client, "read_only")
+    body = client.post("/ask", json={"question": "refund window for annual plans?"}, headers=h).json()
+    assert body["citations"][0]["source"] in {"04-customer-refund-policy.md", "08-beacon-product-faq.md"}
+    with client.stream("POST", "/ask", json={"question": "refund window?", "stream": True}, headers=h) as r:
+        text = "".join(r.iter_text())
+    events = [line[7:] for line in text.splitlines() if line.startswith("event: ")]
+    assert events[0] == "retrieval" and events[-1] == "answer"
+    last = json.loads(text.strip().splitlines()[-1][6:])
+    assert "answer" in last
+
+
+def test_roles_are_enforced(client):
+    files = {"file": ("notes.txt", b"The office plant is watered on Tuesdays.", "text/plain")}
+    assert client.post("/documents", files=files, headers=login(client, "read_only")).status_code == 403
+    up = client.post("/documents", files=files, headers=login(client, "standard_user"))
+    assert up.status_code == 201
+    doc_id = up.json()["doc_id"]
+    assert client.delete(f"/documents/{doc_id}", headers=login(client, "standard_user")).status_code == 403
+    assert client.delete(f"/documents/{doc_id}", headers=login(client, "power_user")).status_code == 200
+    assert client.get("/admin/users", headers=login(client, "power_user")).status_code == 403
+    assert client.get("/admin/users", headers=login(client, "admin")).status_code == 200
+
+
+def test_duplicate_upload_and_unsupported_type(client):
+    h = login(client, "standard_user")
+    content = (CORPUS / "02-expense-policy.md").read_bytes()
+    r = client.post("/documents", files={"file": ("again.md", content, "text/markdown")}, headers=h)
+    assert r.json()["duplicate"] is True
+    bad = client.post("/documents", files={"file": ("photo.png", b"\x89PNG", "image/png")}, headers=h)
+    assert bad.status_code == 415

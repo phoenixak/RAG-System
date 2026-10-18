@@ -52,3 +52,7 @@ chroma_db/
 # OS
 .DS_Store
 Thumbs.db
+
+# v2
+.ruff_cache/
+data/chroma/
