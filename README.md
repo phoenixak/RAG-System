@@ -69,7 +69,7 @@ Full per-question output: [`eval/results.md`](eval/results.md). Model choice was
 ```bash
 python -m venv .venv && source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+pip install llama-cpp-python          # prebuilt wheel on Windows/macOS; builds from source on Linux
 pip install -e ".[api,demo,dev]"
 
 python space/app.py                       # the demo UI on http://127.0.0.1:7860

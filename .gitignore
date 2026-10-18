@@ -29,7 +29,6 @@ docker-compose.override.yml
 
 # Data & uploads
 uploads/
-data/
 *.db
 
 # Logs

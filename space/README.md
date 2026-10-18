@@ -3,10 +3,8 @@ title: RAG System Demo
 emoji: 📚
 colorFrom: red
 colorTo: gray
-sdk: gradio
-sdk_version: 6.30.0
-python_version: "3.11"
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 short_description: Cited answers from your docs with hybrid search + reranking

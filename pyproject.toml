@@ -21,8 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# local GGUF model on CPU; install the wheel with:
-#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# local GGUF model on CPU (prebuilt wheel on Windows/macOS; compiles on Linux, see Dockerfile)
 llm = ["llama-cpp-python>=0.3"]
 api = [
     "fastapi>=0.115",
