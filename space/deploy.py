@@ -24,6 +24,11 @@ def main(target: str) -> None:
         shutil.copy2(ROOT / "space" / name, dst / name)
     shutil.copytree(ROOT / "src" / "rag", dst / "src" / "rag", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(ROOT / "data" / "sample_corpus", dst / "sample_corpus")
+    wheels = sorted((ROOT.parent / "wheels").glob("llama_cpp_python-*-linux_x86_64.whl"))
+    if not wheels:
+        sys.exit("no llama-cpp-python wheel in ../wheels — run space/build_wheel.sh first")
+    (dst / "wheels").mkdir()
+    shutil.copy2(wheels[-1], dst / "wheels" / wheels[-1].name)
     print(f"copied the Space into {dst}")
 
 

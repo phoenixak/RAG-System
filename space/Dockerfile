@@ -1,15 +1,15 @@
-# Hugging Face Space (Docker SDK). llama.cpp is compiled here for generic x86-64 + AVX2,
-# because the prebuilt Linux wheels target musl, and the models are baked into the image
-# so a cold start doesn't download 1.2 GB.
+# Hugging Face Space (Docker SDK). llama.cpp comes from a wheel prebuilt in this same base image
+# (space/build_wheel.sh): compiling it on the Space builder runs past its time limit, and the
+# public prebuilt Linux wheels target musl. The models are baked in so a cold start downloads nothing.
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake libgomp1 \
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* && useradd -m -u 1000 user
 
-ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"
+ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+COPY wheels/ /tmp/wheels/
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install "llama-cpp-python==0.3.36"
+    && pip install /tmp/wheels/llama_cpp_python-*.whl
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 
