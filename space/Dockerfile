@@ -7,9 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/* && useradd -m -u 1000 user
 
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
-COPY wheels/ /tmp/wheels/
+# fetched over HTTPS rather than COPY'd: the builder's checkout can hand over the LFS pointer instead of the file
+ARG LLAMA_WHEEL=https://huggingface.co/spaces/Phoenixak99/RAG-System-Demo/resolve/main/wheels/llama_cpp_python-0.3.36-py3-none-linux_x86_64.whl
 RUN pip install torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install /tmp/wheels/llama_cpp_python-*.whl
+    && pip install "$LLAMA_WHEEL"
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt
 
