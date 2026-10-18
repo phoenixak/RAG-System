@@ -82,8 +82,15 @@ class LlamaCppLLM:
         from llama_cpp import Llama
 
         self.s = s
+        # n_threads_batch (prompt reading) defaults to every CPU the OS reports; in a container limited to
+        # 2 cores that oversubscribes badly, so both phases use the same thread count.
         self.llm = Llama.from_pretrained(
-            repo_id=s.llm_repo, filename=s.llm_file, n_ctx=s.llm_ctx, n_threads=s.llm_threads, verbose=False
+            repo_id=s.llm_repo,
+            filename=s.llm_file,
+            n_ctx=s.llm_ctx,
+            n_threads=s.llm_threads,
+            n_threads_batch=s.llm_threads,
+            verbose=False,
         )
 
     def stream(self, messages: list[dict]) -> Iterator[str]:

@@ -6,10 +6,10 @@ Corpus: 8 documents, 50 chunks. Golden set: 42 answerable + 4 unanswerable quest
 
 | Retriever | Hit@1 | Recall@3 | MRR | p50 latency (ms) |
 |---|---:|---:|---:|---:|
-| Vector only (bge-small) | 88% | 100% | 0.929 | 11 |
+| Vector only (bge-small) | 88% | 100% | 0.929 | 12 |
 | BM25 only | 93% | 100% | 0.960 | 0 |
-| Hybrid (RRF) | 90% | 100% | 0.952 | 11 |
-| Hybrid + cross-encoder rerank | 98% | 100% | 0.988 | 123 |
+| Hybrid (RRF) | 90% | 100% | 0.952 | 10 |
+| Hybrid + cross-encoder rerank | 98% | 100% | 0.988 | 121 |
 
 ## Answers (llama.cpp · Qwen3-1.7B-Q4_K_M.gguf, CPU)
 
@@ -19,8 +19,8 @@ Corpus: 8 documents, 50 chunks. Golden set: 42 answerable + 4 unanswerable quest
 | Every citation points to the right document | 100% |
 | Refused when the answer is not in the docs | 100% |
 | False refusals (answer was in the docs) | 0% |
-| Median time to first token (s) | 1.4 |
-| Median full answer time (s) | 2.2 |
+| Median time to first token (s) | 3.5 |
+| Median full answer time (s) | 4.2 |
 
 <details><summary>Every answer</summary>
 

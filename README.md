@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-141310)
 ![License](https://img.shields.io/badge/license-MIT-141310)
 
-Ask questions over your documents and get short answers with a citation for every fact — or an honest "I couldn't find that in the documents." Everything runs on CPU: a 1.7B model through llama.cpp answers in about 2 seconds on two desktop cores (expect 8–10 s on the free Hugging Face Space, whose shared CPUs are slower).
+Ask questions over your documents and get short answers with a citation for every fact — or an honest "I couldn't find that in the documents." Everything runs on CPU: a 1.7B model through llama.cpp answers in about 4 seconds on two desktop cores, and in about 9 seconds on the free Hugging Face Space, whose shared CPUs are slower.
 
 **[Try the live demo →](https://huggingface.co/spaces/Phoenixak99/RAG-System-Demo)** It shows the answer *and* the retrieval trace: where each passage ranked in dense search, BM25 and fusion, and how far the cross-encoder moved it.
 
@@ -60,9 +60,9 @@ The corpus has deliberate distractors (the product FAQ also summarises the refun
 | Every citation points to the right document | 100% |
 | Refused when the answer is not in the docs | 100% |
 | False refusals | 0% |
-| Median time to first token / full answer | 1.4 s / 2.2 s |
+| Median time to first token / full answer | 3.5 s / 4.2 s |
 
-Full per-question output: [`eval/results.md`](eval/results.md). Two choices were made from this eval. Passing the top **3** passages instead of 5 kept accuracy at 95%, raised citation accuracy from 95% to 100%, removed the one false refusal and made answers faster. And the model: Qwen2.5-1.5B with the same retrieval scored 38% on facts and 64% on citations (it often answered with a bare `[1]`); restructuring the prompt and moving to Qwen3-1.7B fixed both.
+Full per-question output: [`eval/results.md`](eval/results.md). Two choices were made from this eval. Passing the top **3** passages instead of 5 kept accuracy at 95%, raised citation accuracy from 95% to 100%, removed the one false refusal and shortened the prompt the model has to read. And the model: Qwen2.5-1.5B with the same retrieval scored 38% on facts and 64% on citations (it often answered with a bare `[1]`); restructuring the prompt and moving to Qwen3-1.7B fixed both.
 
 ## Run it
 
