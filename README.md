@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.11%2B-141310)
 ![License](https://img.shields.io/badge/license-MIT-141310)
 
-Ask questions over your documents and get short answers with a citation for every fact — or an honest "I couldn't find that in the documents." Everything runs on CPU: a 1.7B model through llama.cpp answers in about 2 seconds on two cores.
+Ask questions over your documents and get short answers with a citation for every fact — or an honest "I couldn't find that in the documents." Everything runs on CPU: a 1.7B model through llama.cpp answers in about 2 seconds on two desktop cores (expect 8–10 s on the free Hugging Face Space, whose shared CPUs are slower).
 
 **[Try the live demo →](https://huggingface.co/spaces/Phoenixak99/RAG-System-Demo)** It shows the answer *and* the retrieval trace: where each passage ranked in dense search, BM25 and fusion, and how far the cross-encoder moved it.
 
@@ -33,7 +33,7 @@ Ask questions over your documents and get short answers with a citation for ever
 | Embeddings | `BAAI/bge-small-en-v1.5` (33M, MIT) | Strong retrieval quality per CPU millisecond; query instruction prefix |
 | Keyword search | BM25 (`rank-bm25`) with a tokenizer that keeps numbers like `99.9` and `10:00` intact | Policies are full of exact numbers that dense vectors blur |
 | Fusion | Reciprocal Rank Fusion (k = 60) | Needs no score calibration between the two retrievers |
-| Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` (Apache-2.0) over the top 12 | Reads query and passage together; fixes the cases fusion gets wrong |
+| Reranking | `cross-encoder/ms-marco-MiniLM-L6-v2` (Apache-2.0) over the top 12; the best 3 go to the LLM | Reads query and passage together; fixes the cases fusion gets wrong |
 | Refusals | Threshold on the best cross-encoder score, plus an instruction to the LLM | Cheap first gate, model as the second |
 | Generation | `Qwen3-1.7B` Q4_K_M via llama.cpp (Apache-2.0), thinking mode off; OpenAI-compatible and Anthropic backends optional | Runs on a free 2-vCPU Space; swap in a bigger model with one env var |
 
@@ -43,7 +43,7 @@ Ask questions over your documents and get short answers with a citation for ever
 
 **Retrieval — does the right document come back?**
 
-| Retriever | Hit@1 | Recall@5 | MRR | p50 latency |
+| Retriever | Hit@1 | Recall@3 | MRR | p50 latency |
 |---|---:|---:|---:|---:|
 | Vector only (bge-small) | 88% | 100% | 0.929 | 8 ms |
 | BM25 only | 93% | 100% | 0.960 | <1 ms |
@@ -57,12 +57,12 @@ The corpus has deliberate distractors (the product FAQ also summarises the refun
 | Metric | Value |
 |---|---:|
 | Answer contains the expected fact | 95% |
-| Every citation points to the right document | 95% |
+| Every citation points to the right document | 100% |
 | Refused when the answer is not in the docs | 100% |
-| False refusals | 2% (1 of 42) |
-| Median time to first token / full answer | 1.6 s / 2.3 s |
+| False refusals | 0% |
+| Median time to first token / full answer | 1.4 s / 2.2 s |
 
-Full per-question output: [`eval/results.md`](eval/results.md). Model choice was driven by this eval: Qwen2.5-1.5B with the same retrieval scored 38% on facts and 64% on citations (it often answered with a bare `[1]`); restructuring the prompt and moving to Qwen3-1.7B fixed both.
+Full per-question output: [`eval/results.md`](eval/results.md). Two choices were made from this eval. Passing the top **3** passages instead of 5 kept accuracy at 95%, raised citation accuracy from 95% to 100%, removed the one false refusal and made answers faster. And the model: Qwen2.5-1.5B with the same retrieval scored 38% on facts and 64% on citations (it often answered with a bare `[1]`); restructuring the prompt and moving to Qwen3-1.7B fixed both.
 
 ## Run it
 

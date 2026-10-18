@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 40
     candidates: int = 20  # taken from each retriever before fusion
     rerank_pool: int = 12  # fused candidates the cross-encoder re-scores
-    top_k: int = 5  # chunks passed to the LLM
+    top_k: int = 3  # chunks passed to the LLM (3 beat 5 in the eval: same accuracy, better citations, faster)
     rrf_k: int = 60
     # Below this cross-encoder score the best chunk is judged irrelevant and the
     # question is answered with a refusal instead of calling the LLM.
